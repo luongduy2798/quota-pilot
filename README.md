@@ -20,6 +20,8 @@ Tab Accounts → Connect. Đăng nhập ở provider, copy callback URL trên th
 
 Codex dùng cùng flow cục bộ của 9Router/LCA: app mở popup, listener local tại `http://localhost:1455/auth/callback` nhận callback rồi chuyển vào Worker; popup tự đóng sau khi server đổi code. Nếu cổng 1455 đang do 9Router/LCA giữ, hãy đóng phiên OAuth đang chạy rồi khởi động lại app. Nếu OAuth app chấp nhận một callback khác, đặt `CODEX_REDIRECT_URI` đúng URI đã đăng ký; khi đó cần hoàn tất callback theo hướng dẫn thủ công. Hosted OAuth cần public HTTPS hostname và URI khớp registration trước khi connect.
 
+Với dashboard production, chạy relay trên máy đang mở trình duyệt: `npm run oauth:relay -- https://quota.chillix.me`. Relay nhận callback loopback rồi chuyển nguyên state/code vào callback production; không lưu credential.
+
 Codex scheduler chỉ gửi inference thật qua Codex model registry.
 
 ## Accounts và quota

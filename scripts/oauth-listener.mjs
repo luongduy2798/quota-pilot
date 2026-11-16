@@ -1,9 +1,18 @@
 import { createServer } from "node:http";
 
-export async function startOAuthListener(origin, port = 1455) {
+export async function startOAuthListener(
+  origin,
+  port = 1455,
+  allowRemote = false,
+) {
   const target = new URL(origin);
-  if (!["localhost", "127.0.0.1"].includes(target.hostname))
-    throw Error("Local OAuth requires a loopback APP_ORIGIN.");
+  if (
+    (allowRemote ? target.protocol !== "https:" : target.protocol !== "http:") ||
+    target.username ||
+    target.password ||
+    (!allowRemote && !["localhost", "127.0.0.1"].includes(target.hostname))
+  )
+    throw Error("OAuth callback target must be an HTTP(S) origin.");
   const server = createServer((request, response) => {
     response.setHeader("Cache-Control", "no-store");
     response.setHeader("Referrer-Policy", "no-referrer");

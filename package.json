@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "setup": "node scripts/setup.mjs",
+    "oauth:relay": "node scripts/oauth-relay.mjs",
     "import:9router": "node scripts/import-9router.mjs",
     "dev": "npm run build && npm run db:local && node scripts/local.mjs",
     "db:local": "wrangler d1 migrations apply quota-pilot --local",

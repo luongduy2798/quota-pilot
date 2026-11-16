@@ -1372,6 +1372,10 @@ function App() {
                   <code className="break">{oauth.redirectUri}</code>
                 </span>
                 <span>
+                  Production cần local callback relay trên máy đang mở trình
+                  duyệt.
+                </span>
+                <span>
                   Provider phải chấp nhận URI này. Nếu từ chối, cần OAuth
                   client/redirect URI đã đăng ký.
                 </span>
