@@ -178,14 +178,14 @@ export async function refresh(
     {
       method: "POST",
       headers: {
-        "Content-Type": "application/x-www-form-urlencoded",
+        "Content-Type": "application/json",
         Accept: "application/json",
       },
-      body: new URLSearchParams({
+      body: JSON.stringify({
         grant_type: "refresh_token",
         refresh_token: secret.refreshToken,
         client_id: clientId(provider, env),
-      }).toString(),
+      }),
     },
     fetcher,
   );
@@ -288,6 +288,9 @@ export function oauthHeaders(
   return {
     Authorization: `Bearer ${secret.accessToken}`,
     Accept: "application/json",
+    Origin: "https://chatgpt.com",
+    Referer: "https://chatgpt.com/",
+    "User-Agent": "Mozilla/5.0",
     ...(secret.accountId ? { "ChatGPT-Account-ID": secret.accountId } : {}),
   };
 }

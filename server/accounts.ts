@@ -136,7 +136,7 @@ export async function credentials(
     throw new AppError("provider_cooldown", 429);
   let secret = await decrypt<Secret>(value.secret, env, `account:${value.id}`);
   if (value.kind !== "oauth") return secret;
-  if (value.status === "reconnect_required")
+  if (value.status === "reconnect_required" && !force)
     throw new AppError("reconnect_required", 409);
   if (
     !force &&
@@ -590,7 +590,11 @@ export async function quota(
       value.id,
     );
   try {
-    let secret = await credentials(env, value);
+    let secret = await credentials(
+      env,
+      value,
+      value.status === "reconnect_required",
+    );
     let data: QuotaData;
     try {
       data = await fetchQuota(oauthProvider(value.provider), secret, env);

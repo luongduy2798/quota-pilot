@@ -17,6 +17,12 @@ try {
   process.once("SIGINT", close);
   process.once("SIGTERM", close);
 } catch (error) {
-  console.error(error instanceof Error ? error.message : error);
+  if (error?.code === "EADDRINUSE") {
+    console.error(
+      "Port 1455 đang được process khác dùng. Dừng npm run dev hoặc 9Router đang chạy, rồi chạy lại relay.",
+    );
+  } else {
+    console.error(error instanceof Error ? error.message : error);
+  }
   process.exit(1);
 }
