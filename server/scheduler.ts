@@ -101,6 +101,67 @@ export async function saveSchedule(
     );
   return id;
 }
+export async function saveSchedules(env: Env, body: Record<string, any>) {
+  const accountIds = body.accountIds;
+  if (
+    !Array.isArray(accountIds) ||
+    !accountIds.length ||
+    accountIds.length > 100 ||
+    accountIds.some(
+      (id: unknown) =>
+        typeof id !== "string" || !/^[a-zA-Z0-9-]{1,100}$/.test(id),
+    ) ||
+    new Set(accountIds).size !== accountIds.length
+  )
+    throw new AppError("invalid_account_ids");
+  const targets = await Promise.all(
+    accountIds.map((id: string) => account(env, id)),
+  );
+  const enabled = flag(body.enabled, true);
+  for (const target of targets) {
+    if (target.kind !== "oauth") throw new AppError("oauth_account_required");
+    if (enabled && !target.enabled) throw new AppError("account_disabled");
+  }
+  const model = textField(body.model, "model", 150);
+  if (
+    targets.some(
+      (target) => !PROVIDERS[oauthProvider(target.provider)].models.includes(model),
+    )
+  )
+    throw new AppError("unsupported_model");
+  const name = textField(body.name, "name");
+  const time = validateTime(body.localTime);
+  const timezone = validateTimezone(
+    body.timezone ?? env.DEFAULT_TIMEZONE ?? DEFAULT_TIMEZONE,
+  );
+  const weekdays = validateWeekdays(body.weekdays ?? [0, 1, 2, 3, 4, 5, 6]);
+  const preset = body.preset ?? "ping";
+  if (!Object.hasOwn(PRESETS, preset)) throw new AppError("invalid_preset");
+  const skip = flag(body.skipIfActive, false),
+    next = nextOccurrence(time, timezone, weekdays, new Date()),
+    stamp = now(),
+    ids = accountIds.map(() => crypto.randomUUID());
+  await env.DB.batch(
+    ids.map((id, index) =>
+      env.DB.prepare("INSERT INTO schedules VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)").bind(
+        id,
+        name,
+        targets[index].id,
+        model,
+        time,
+        timezone,
+        JSON.stringify(weekdays),
+        +enabled,
+        +skip,
+        preset,
+        next,
+        stamp,
+        stamp,
+      ),
+    ),
+  );
+  return { ids };
+}
 export function publicSchedule(value: Schedule) {
   return {
     ...value,

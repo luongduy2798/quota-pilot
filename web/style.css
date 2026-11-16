@@ -412,6 +412,44 @@ nav button span {
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 12px;
 }
+.account-selection-bar {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 38px;
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #15181b;
+}
+.select-all {
+  flex-direction: row;
+  align-items: center;
+  gap: 7px;
+  color: #d6d9dd;
+  font-size: 11px;
+  cursor: pointer;
+}
+.account-select,
+.select-all input {
+  width: 15px;
+  height: 15px;
+  min-width: 15px;
+  margin: 0;
+  padding: 0;
+  accent-color: var(--accent);
+}
+.danger-button {
+  margin-left: auto;
+  color: #f0b2ac;
+  border-color: #68403c;
+  background: #2a2020;
+}
+.danger-button:hover {
+  background: #3a2827;
+  border-color: #8a4b45;
+}
 .quota-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1005,6 +1043,51 @@ dialog::backdrop {
   width: 15px;
   height: 15px;
   accent-color: var(--accent);
+}
+.schedule-account-field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.field-label {
+  font-size: 12px;
+}
+.schedule-accounts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px;
+  max-height: 190px;
+  overflow: auto;
+  padding: 2px;
+}
+.schedule-account-actions {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin-bottom: 7px;
+}
+.schedule-account-actions button {
+  padding: 6px 9px;
+  font-size: 10px;
+}
+.schedule-accounts .checkbox {
+  min-width: 0;
+  padding: 9px 10px;
+  border: 1px solid #393e45;
+  border-radius: 7px;
+  overflow: hidden;
+  cursor: pointer;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.schedule-accounts .checkbox:has(input:checked) {
+  border-color: #a77654;
+  background: #35291f;
+  color: #f0bd97;
+}
+.schedule-accounts .checkbox span {
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 fieldset {
   border: 0;

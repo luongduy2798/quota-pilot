@@ -23,6 +23,7 @@ import {
   allQuotas,
   beginOAuth,
   credentials,
+  deleteAccounts,
   finishOAuth,
   import9RouterAccounts,
   publicAccount,
@@ -36,6 +37,7 @@ import {
   manualExecution,
   publicSchedule,
   saveSchedule,
+  saveSchedules,
   schedule,
   tick,
 } from "./scheduler";
@@ -112,6 +114,8 @@ async function route(
     );
   if (path === "/api/accounts" && method === "POST")
     return json({ id: await saveCustom(env, await jsonBody(request)) }, 201);
+  if (path === "/api/accounts" && method === "DELETE")
+    return json(await deleteAccounts(env, (await jsonBody(request)).ids));
   if (path === "/api/accounts/import-9router" && method === "POST")
     return json(
       await import9RouterAccounts(env, (await jsonBody(request)).accounts),
@@ -264,8 +268,15 @@ async function route(
     );
     return json(values.map(publicSchedule));
   }
-  if (path === "/api/schedules" && method === "POST")
-    return json({ id: await saveSchedule(env, await jsonBody(request)) }, 201);
+  if (path === "/api/schedules" && method === "POST") {
+    const body = await jsonBody(request);
+    return json(
+      Array.isArray(body.accountIds)
+        ? await saveSchedules(env, body)
+        : { id: await saveSchedule(env, body) },
+      201,
+    );
+  }
   const scheduleRoute = path.match(
     /^\/api\/schedules\/([a-zA-Z0-9-]+)(?:\/(run-now|executions))?$/,
   );

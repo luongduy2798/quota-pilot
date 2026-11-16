@@ -178,14 +178,14 @@ export async function refresh(
     {
       method: "POST",
       headers: {
-        "Content-Type": "application/json",
+        "Content-Type": "application/x-www-form-urlencoded",
         Accept: "application/json",
       },
-      body: JSON.stringify({
+      body: new URLSearchParams({
         grant_type: "refresh_token",
         refresh_token: secret.refreshToken,
         client_id: clientId(provider, env),
-      }),
+      }).toString(),
     },
     fetcher,
   );

@@ -216,6 +216,7 @@ function App() {
     [password, setPassword] = useState("");
   const [tab, setTab] = useState("Accounts"),
     [accounts, setAccounts] = useState<Account[]>([]),
+    [selectedAccountIds, setSelectedAccountIds] = useState<string[]>([]),
     [quotas, setQuotas] = useState<Quota[]>([]),
     [schedules, setSchedules] = useState<Schedule[]>([]),
     [executions, setExecutions] = useState<Execution[]>([]);
@@ -250,6 +251,7 @@ function App() {
       api<Execution[]>("/executions"),
     ]);
     setAccounts(a);
+    setSelectedAccountIds((ids) => ids.filter((id) => a.some((account) => account.id === id)));
     setQuotas(q);
     setSchedules(s);
     setExecutions(e);
@@ -572,12 +574,25 @@ function App() {
       </main>
     );
   function accountCard(a: Account) {
+    const selected = selectedAccountIds.includes(a.id);
     return (
       <article
         className={`account-card ${a.enabled ? "is-enabled" : ""}`}
         key={a.id}
       >
         <div className="compact-card-head">
+          <input
+            className="account-select"
+            type="checkbox"
+            checked={selected}
+            disabled={busy}
+            aria-label={`Chọn ${a.name}`}
+            onChange={() =>
+              setSelectedAccountIds((ids) =>
+                selected ? ids.filter((id) => id !== a.id) : [...ids, a.id],
+              )
+            }
+          />
           <div
             className="provider-icon"
           >
@@ -856,6 +871,53 @@ function App() {
                 ))}
               </div>
               <div className="account-grid">
+                <div className="account-selection-bar">
+                  <label className="select-all">
+                    <input
+                      type="checkbox"
+                      checked={
+                        accounts.length > 0 &&
+                        accounts.every((account) =>
+                          selectedAccountIds.includes(account.id),
+                        )
+                      }
+                      disabled={busy || !accounts.length}
+                      onChange={(event) =>
+                        setSelectedAccountIds(
+                          event.currentTarget.checked
+                            ? accounts.map((account) => account.id)
+                            : [],
+                        )
+                      }
+                    />
+                    Chọn tất cả
+                  </label>
+                  <span className="muted">
+                    {selectedAccountIds.length
+                      ? `Đã chọn ${selectedAccountIds.length}`
+                      : "Chưa chọn account"}
+                  </span>
+                  <button
+                    className="danger-button"
+                    disabled={busy || !selectedAccountIds.length}
+                    onClick={() => {
+                      const count = selectedAccountIds.length;
+                      if (
+                        confirm(
+                          `Xóa ${count} account đã chọn? Lịch liên quan sẽ bị xóa. Lịch sử đã chạy được giữ lại.`,
+                        )
+                      )
+                        action(async () => {
+                          await api("/accounts", "DELETE", {
+                            ids: selectedAccountIds,
+                          });
+                          setSelectedAccountIds([]);
+                        });
+                    }}
+                  >
+                    Xóa đã chọn
+                  </button>
+                </div>
                 {accounts.filter((a) => a.kind === "oauth").map(accountCard)}
               </div>
               {!accounts.some((a) => a.kind === "oauth") && (
@@ -1047,8 +1109,8 @@ function App() {
                 <div>
                   <h2>Scheduler</h2>
                   <p>
-                    Một lịch, một tài khoản. Mỗi occurrence gửi tối đa một
-                    request.
+                    Tạo cùng một cấu hình cho nhiều tài khoản. Mỗi occurrence
+                    gửi tối đa một request.
                   </p>
                 </div>
                 <button
@@ -1534,10 +1596,16 @@ function ScheduleForm({
       ((a.schedulerSupported && a.enabled) || a.id === current?.accountId),
   );
   const [name, setName] = useState(current?.name || "Morning check"),
-    [accountId, setAccountId] = useState(
-      current?.accountId || options[0]?.id || "",
+    [accountIds, setAccountIds] = useState<string[]>(
+      current?.accountId
+        ? [current.accountId]
+        : options[0]?.id
+          ? [options[0].id]
+          : [],
     ),
-    [model, setModel] = useState(current?.model || options[0]?.models[0] || ""),
+    [model, setModel] = useState(
+      current?.model || options[0]?.models[0] || "",
+    ),
     [localTime, setLocalTime] = useState(current?.localTime || "07:00"),
     [timezone, setTimezone] = useState(current?.timezone || "Asia/Ho_Chi_Minh"),
     [weekdays, setWeekdays] = useState(
@@ -1554,7 +1622,7 @@ function ScheduleForm({
           event.preventDefault();
           save({
             name,
-            accountId,
+            ...(current ? { accountId: accountIds[0] } : { accountIds }),
             model,
             localTime,
             timezone,
@@ -1574,25 +1642,65 @@ function ScheduleForm({
             onChange={(e) => setName(e.target.value)}
           />
         </label>
-        <label>
-          Tài khoản OAuth
-          <select
-            required
-            value={accountId}
-            onChange={(e) => {
-              setAccountId(e.target.value);
-              setModel(
-                accounts.find((a) => a.id === e.target.value)?.models[0] || "",
-              );
-            }}
-          >
-            {options.map((a) => (
-              <option key={a.id} value={a.id}>
-                {a.name} · {providerName(a.provider)}
-              </option>
-            ))}
-          </select>
-        </label>
+        <div className="schedule-account-field">
+          <span className="field-label">
+            Tài khoản OAuth{current ? "" : " (chọn nhiều)"}
+          </span>
+          {current ? (
+            <select
+              required
+              value={accountIds[0] || ""}
+              onChange={(e) => setAccountIds([e.target.value])}
+            >
+              {options.map((a) => (
+                <option key={a.id} value={a.id}>
+                  {a.name} · {providerName(a.provider)}
+                </option>
+              ))}
+            </select>
+          ) : (
+            <div>
+              <div className="schedule-account-actions">
+                <button
+                  type="button"
+                  disabled={!options.length}
+                  onClick={() =>
+                    setAccountIds(
+                      accountIds.length === options.length
+                        ? []
+                        : options.map((a) => a.id),
+                    )
+                  }
+                >
+                  {accountIds.length === options.length
+                    ? "Bỏ chọn tất cả"
+                    : "Chọn tất cả"}
+                </button>
+                <small>{accountIds.length} account đã chọn</small>
+              </div>
+              <div className="schedule-accounts">
+                {options.map((a) => (
+                  <label className="checkbox" key={a.id}>
+                    <input
+                      type="checkbox"
+                      checked={accountIds.includes(a.id)}
+                      onChange={(e) =>
+                        setAccountIds((ids) =>
+                          e.target.checked
+                            ? [...ids, a.id]
+                            : ids.filter((id) => id !== a.id),
+                        )
+                      }
+                    />
+                    <span>
+                      {a.name} · {providerName(a.provider)}
+                    </span>
+                  </label>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
         <label>
           Model
           <select
@@ -1601,7 +1709,7 @@ function ScheduleForm({
             onChange={(e) => setModel(e.target.value)}
           >
             {accounts
-              .find((a) => a.id === accountId)
+              .find((a) => a.id === accountIds[0])
               ?.models.map((m) => (
                 <option key={m}>{m}</option>
               ))}
@@ -1697,7 +1805,7 @@ function ScheduleForm({
           </button>
           <button
             className="primary"
-            disabled={busy || !weekdays.length || !accountId}
+            disabled={busy || !weekdays.length || !accountIds.length}
           >
             Lưu lịch
           </button>

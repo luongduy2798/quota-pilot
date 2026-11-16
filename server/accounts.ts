@@ -47,6 +47,46 @@ export async function account(env: Env, id: string) {
   if (!value) throw new AppError("account_not_found", 404);
   return value;
 }
+export async function deleteAccounts(env: Env, values: unknown) {
+  if (
+    !Array.isArray(values) ||
+    !values.length ||
+    values.length > 500 ||
+    values.some(
+      (id) =>
+        typeof id !== "string" ||
+        !/^[a-zA-Z0-9-]{1,100}$/.test(id),
+    )
+  )
+    throw new AppError("invalid_account_ids");
+  const ids = [...new Set(values as string[])];
+  if (ids.length !== values.length) throw new AppError("invalid_account_ids");
+  const requested = ids.map(() => "(?)").join(","),
+    stamp = now(),
+    result = await run(
+      env,
+      `WITH requested(id) AS (VALUES ${requested}),
+       eligible AS (
+         SELECT a.id FROM accounts a JOIN requested r ON r.id=a.id
+         WHERE (a.work_lock_until IS NULL OR a.work_lock_until<?)
+           AND (a.refresh_lock_until IS NULL OR a.refresh_lock_until<?)
+       )
+       DELETE FROM accounts
+       WHERE id IN (SELECT id FROM requested)
+         AND (SELECT COUNT(*) FROM eligible)=?
+         AND (work_lock_until IS NULL OR work_lock_until<?)
+         AND (refresh_lock_until IS NULL OR refresh_lock_until<?)`,
+      ...ids,
+      stamp,
+      stamp,
+      ids.length,
+      stamp,
+      stamp,
+    );
+  if (result.meta.changes !== ids.length)
+    throw new AppError("account_busy", 409);
+  return { deleted: ids.length };
+}
 export function publicAccount(value: Account, _env: Env) {
   const {
     id,
