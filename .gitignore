@@ -1,0 +1,8 @@
+node_modules/
+dist/
+.wrangler/
+.dev.vars
+.local-admin-password
+.env
+test-results/
+playwright-report/
