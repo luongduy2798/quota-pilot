@@ -175,7 +175,7 @@ async function route(
     return json({ imported, skipped });
   }
   const oauth = path.match(
-    /^\/api\/oauth\/(claude|codex)\/(start|callback|complete)$/,
+    /^\/api\/oauth\/(codex)\/(start|callback|complete)$/,
   );
   if (oauth) {
     const provider = oauthProvider(oauth[1]);

@@ -15,7 +15,6 @@ type Account = {
   capability: string;
   models: string[];
   schedulerSupported: boolean;
-  schedulerBlocker: string | null;
   config: { baseUrl?: string; models?: string[]; headerNames?: string[] };
 };
 type WindowQuota = {
@@ -73,7 +72,6 @@ type PendingOAuth = {
 const providerName = (id: string) =>
   ({
     codex: "Codex",
-    claude: "Claude Code",
     "openai-compatible": "OpenAI-compatible",
     "anthropic-compatible": "Anthropic-compatible",
   })[id] || id;
@@ -302,10 +300,7 @@ function App() {
         if (!Array.isArray(backup.providerConnections))
           throw new Error("invalid_9router_backup");
         const candidates = backup.providerConnections.flatMap((row: any) => {
-          if (
-            row?.authType !== "oauth" ||
-            !["claude", "codex"].includes(row.provider)
-          )
+          if (row?.authType !== "oauth" || row.provider !== "codex")
             return [];
           const data =
             typeof row.data === "string"
@@ -556,9 +551,6 @@ function App() {
           <button className="primary" disabled={busy}>
             {busy ? "Đang đăng nhập…" : "Đăng nhập"}
           </button>
-          <small>
-            Thiết lập lần đầu: <code>npm run setup</code>
-          </small>
         </form>
       </main>
     );
@@ -570,13 +562,9 @@ function App() {
       >
         <div className="compact-card-head">
           <div
-            className={`provider-icon ${a.provider === "claude" ? "claude" : ""}`}
+            className="provider-icon"
           >
-            {a.provider === "claude"
-              ? "Cl"
-              : a.provider === "codex"
-                ? "Cx"
-                : "API"}
+            {a.provider === "codex" ? "Cx" : "API"}
           </div>
           <div className="grow">
             <h3>{a.name}</h3>
@@ -596,9 +584,6 @@ function App() {
             }
           />
         </div>
-        {a.schedulerBlocker && (
-          <p className="small-warning">{a.schedulerBlocker}</p>
-        )}
         <div className="compact-actions">
           {a.kind === "oauth" ? (
             <IconButton
@@ -806,11 +791,11 @@ function App() {
                 <div>
                   <h2>OAuth Providers</h2>
                   <p>
-                    Kết nối Claude Code/Codex hoặc nhập từ file DB 9Router.
+                    Kết nối Codex hoặc nhập từ file DB 9Router.
                   </p>
                 </div>
                 <div className="account-import">
-                  <Badge>02 providers supported</Badge>
+                  <Badge>01 OAuth provider</Badge>
                   <input
                     ref={importFile}
                     type="file"
@@ -826,8 +811,8 @@ function App() {
                     disabled={busy}
                     title={
                       localImportEnabled
-                        ? "Nhập account Claude/Codex từ backup JSON hoặc DB SQLite 9Router"
-                        : "Nhập account Claude/Codex từ backup JSON 9Router; DB SQLite chỉ có trên app local"
+                        ? "Nhập account Codex từ backup JSON hoặc DB SQLite 9Router"
+                        : "Nhập account Codex từ backup JSON 9Router; DB SQLite chỉ có trên app local"
                     }
                     onClick={() => importFile.current?.click()}
                   >
@@ -836,20 +821,12 @@ function App() {
                 </div>
               </div>
               <div className="connect-grid">
-                {["claude", "codex"].map((provider) => (
+                {["codex"].map((provider) => (
                   <div className="connect-card" key={provider}>
-                    <div
-                      className={`provider-icon ${provider === "claude" ? "claude" : ""}`}
-                    >
-                      {provider === "claude" ? "Cl" : "Cx"}
-                    </div>
+                    <div className="provider-icon">Cx</div>
                     <div className="grow">
                       <h3>{providerName(provider)}</h3>
-                      <p>
-                        {provider === "claude"
-                          ? "OAuth quota · scheduler cần xác minh"
-                          : "OAuth quota · scheduled inference"}
-                      </p>
+                      <p>OAuth quota · scheduled inference</p>
                     </div>
                     <button
                       className="primary"
@@ -926,14 +903,8 @@ function App() {
                       key={a.id}
                     >
                       <div className="compact-card-head">
-                        <div
-                          className={`provider-icon ${a.provider === "claude" ? "claude" : ""}`}
-                        >
-                          {a.kind === "custom"
-                            ? "API"
-                            : a.provider === "claude"
-                              ? "Cl"
-                              : "Cx"}
+                        <div className="provider-icon">
+                          {a.kind === "custom" ? "API" : "Cx"}
                         </div>
                         <div className="grow">
                           <h3>

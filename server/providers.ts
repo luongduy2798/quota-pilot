@@ -57,46 +57,21 @@ export const PROVIDERS = {
       "gpt-5.6-luna",
     ],
   },
-  claude: {
-    clientId: "9d1c250a-e61b-44d9-88ed-5944d1962f5e",
-    authorize: "https://claude.ai/oauth/authorize",
-    token: "https://api.anthropic.com/v1/oauth/token",
-    scope: "org:create_api_key user:profile user:inference",
-    quota: "https://api.anthropic.com/api/oauth/usage?cedar_ember=1",
-    inference: "https://api.anthropic.com/v1/messages?beta=true",
-    models: [
-      "claude-haiku-4-5-20251001",
-      "claude-sonnet-5",
-      "claude-sonnet-5-5",
-      "claude-opus-5",
-      "claude-opus-5-5",
-      "claude-fable-5",
-      "claude-fable-5-1",
-    ],
-  },
 };
 export const PRESETS: Record<string, string> = {
   ping: "Reply only OK.",
   hello: "Say hello in one word.",
 };
 export function oauthProvider(value: string): OAuthProvider {
-  if (value !== "claude" && value !== "codex")
+  if (value !== "codex")
     throw new AppError("unsupported_provider");
-  return value;
+  return "codex";
 }
 export function clientId(provider: OAuthProvider, env: Env) {
-  return (
-    (provider === "codex" ? env.CODEX_CLIENT_ID : env.CLAUDE_CLIENT_ID) ||
-    PROVIDERS[provider].clientId
-  );
+  return env.CODEX_CLIENT_ID || PROVIDERS[provider].clientId;
 }
-export function redirectURI(provider: OAuthProvider, env: Env) {
-  return (
-    (provider === "codex" ? env.CODEX_REDIRECT_URI : env.CLAUDE_REDIRECT_URI) ||
-    (provider === "codex"
-      ? "http://localhost:1455/auth/callback"
-      : `${env.APP_ORIGIN}/api/oauth/claude/callback`)
-  );
+export function redirectURI(_provider: OAuthProvider, env: Env) {
+  return env.CODEX_REDIRECT_URI || "http://localhost:1455/auth/callback";
 }
 export function authURL(
   provider: OAuthProvider,
@@ -114,12 +89,9 @@ export function authURL(
     code_challenge_method: "S256",
     state,
   });
-  if (provider === "claude") params.set("code", "true");
-  else {
-    params.set("id_token_add_organizations", "true");
-    params.set("codex_cli_simplified_flow", "true");
-    params.set("originator", "codex_cli_rs");
-  }
+  params.set("id_token_add_organizations", "true");
+  params.set("codex_cli_simplified_flow", "true");
+  params.set("originator", "codex_cli_rs");
   return `${config.authorize}?${params}`;
 }
 export async function providerJSON(response: Response): Promise<any> {
@@ -147,19 +119,15 @@ export async function exchange(
   env: Env,
   code: string,
   verifier: string,
-  state: string,
+  _state: string,
   fetcher: typeof fetch = fetch,
 ) {
-  const [actualCode, codeState] = code.split("#");
-  if (codeState && codeState !== state)
-    throw new AppError("oauth_state_mismatch", 403);
   const body = {
     grant_type: "authorization_code",
     client_id: clientId(provider, env),
-    code: provider === "claude" ? actualCode : code,
+    code,
     redirect_uri: redirectURI(provider, env),
     code_verifier: verifier,
-    ...(provider === "claude" ? { state: codeState || state } : {}),
   };
   let response: Response;
   try {
@@ -169,16 +137,10 @@ export async function exchange(
       {
         method: "POST",
         headers: {
-          "Content-Type":
-            provider === "claude"
-              ? "application/json"
-              : "application/x-www-form-urlencoded",
+          "Content-Type": "application/x-www-form-urlencoded",
           Accept: "application/json",
         },
-        body:
-          provider === "claude"
-            ? JSON.stringify(body)
-            : new URLSearchParams(body).toString(),
+        body: new URLSearchParams(body).toString(),
       },
       fetcher,
     );
@@ -251,68 +213,27 @@ export function oauthSubject(data: {
   return subject;
 }
 export async function identity(
-  provider: OAuthProvider,
+  _provider: OAuthProvider,
   data: any,
   secret: Secret,
-  fetcher: typeof fetch = fetch,
-  env?: Pick<Env, "UPSTREAM_PROXY_URL">,
+  _fetcher: typeof fetch = fetch,
+  _env?: Pick<Env, "UPSTREAM_PROXY_URL">,
 ) {
-  if (provider === "codex") {
-    // Tokens originate directly from the fixed TLS token endpoint, never browser input.
-    const payload = claims(data.id_token || data.access_token),
-      auth = payload["https://api.openai.com/auth"] || {};
-    const account = auth.chatgpt_account_id || payload.account_id;
-    if (
-      typeof payload.sub !== "string" ||
-      !payload.sub ||
-      typeof account !== "string" ||
-      !account
-    )
-      throw new AppError("oauth_identity_unavailable", 502);
-    secret.accountId = account;
-    return {
-      id: `${payload.sub}:${account}`,
-      name: String(payload.email || "Codex account").slice(0, 100),
-    };
-  }
-  // 9Router quota profile returns organization.uuid, not account identity. Do not use
-  // organization IDs: two unrelated users can share an org and dedup incorrectly.
-  // Treat provider token subject as the stable upstream account identity.
-  const payload = claims(data.id_token || data.access_token);
-  if (typeof payload.sub !== "string" || !payload.sub)
+  // Tokens originate directly from the fixed TLS token endpoint, never browser input.
+  const payload = claims(data.id_token || data.access_token),
+    auth = payload["https://api.openai.com/auth"] || {};
+  const account = auth.chatgpt_account_id || payload.account_id;
+  if (
+    typeof payload.sub !== "string" ||
+    !payload.sub ||
+    typeof account !== "string" ||
+    !account
+  )
     throw new AppError("oauth_identity_unavailable", 502);
-  const profile = await providerJSON(
-    await (env
-      ? upstreamFetch(
-          env,
-          "https://api.anthropic.com/api/oauth/profile",
-          {
-            headers: {
-              Authorization: `Bearer ${secret.accessToken}`,
-              "anthropic-beta": "oauth-2025-04-20",
-              "anthropic-version": "2023-06-01",
-              "User-Agent": "claude-cli/2.1.280 (external, sdk-cli)",
-            },
-            redirect: "error",
-            signal: AbortSignal.timeout(4000),
-          },
-          fetcher,
-        )
-      : fetcher("https://api.anthropic.com/api/oauth/profile", {
-          headers: {
-            Authorization: `Bearer ${secret.accessToken}`,
-            "anthropic-beta": "oauth-2025-04-20",
-            "anthropic-version": "2023-06-01",
-            "User-Agent": "claude-cli/2.1.280 (external, sdk-cli)",
-          },
-          redirect: "error",
-          signal: AbortSignal.timeout(4000),
-        })),
-  );
-  const email: unknown = payload.email || profile.account?.email;
+  secret.accountId = account;
   return {
-    id: payload.sub,
-    name: String(email || "Claude account").slice(0, 100),
+    id: `${payload.sub}:${account}`,
+    name: String(payload.email || "Codex account").slice(0, 100),
   };
 }
 function resetAt(value: unknown) {
@@ -339,17 +260,9 @@ function quotaWindow(value: any, key: string): WindowQuota | null {
     resetAt: resetAt(value.reset_at ?? value.resets_at ?? value.resetAt),
   };
 }
-export function normalizeQuota(provider: OAuthProvider, data: any): QuotaData {
+export function normalizeQuota(_provider: OAuthProvider, data: any): QuotaData {
   if (!data || typeof data !== "object" || Array.isArray(data))
     throw new AppError("provider_format_changed", 502);
-  if (provider === "claude") {
-    if (!("five_hour" in data) && !("seven_day" in data))
-      throw new AppError("provider_format_changed", 502);
-    return {
-      window5h: quotaWindow(data.five_hour, "utilization"),
-      weekly: quotaWindow(data.seven_day, "utilization"),
-    };
-  }
   const rate =
     data.rate_limit || data.rate_limits || data.rate_limits_by_limit_id?.codex;
   if (!rate || typeof rate !== "object")
@@ -369,25 +282,14 @@ export function normalizeQuota(provider: OAuthProvider, data: any): QuotaData {
   return { window5h: select(0), weekly: select(1) };
 }
 export function oauthHeaders(
-  provider: OAuthProvider,
+  _provider: OAuthProvider,
   secret: Secret,
 ): Record<string, string> {
-  return provider === "claude"
-    ? {
-        Authorization: `Bearer ${secret.accessToken}`,
-        "anthropic-version": "2023-06-01",
-        "anthropic-beta":
-          "claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14,context-management-2025-06-27,prompt-caching-scope-2026-01-05,advanced-tool-use-2025-11-20,effort-2025-11-24,structured-outputs-2025-12-15,fast-mode-2026-02-01,redact-thinking-2026-02-12,token-efficient-tools-2026-03-28",
-        "User-Agent": "claude-cli/2.1.280 (external, sdk-cli)",
-        "Anthropic-Dangerous-Direct-Browser-Access": "true",
-        "X-App": "cli",
-        Accept: "application/json",
-      }
-    : {
-        Authorization: `Bearer ${secret.accessToken}`,
-        Accept: "application/json",
-        ...(secret.accountId ? { "ChatGPT-Account-ID": secret.accountId } : {}),
-      };
+  return {
+    Authorization: `Bearer ${secret.accessToken}`,
+    Accept: "application/json",
+    ...(secret.accountId ? { "ChatGPT-Account-ID": secret.accountId } : {}),
+  };
 }
 export async function fetchQuota(
   provider: OAuthProvider,
@@ -402,13 +304,7 @@ export async function fetchQuota(
         env,
         PROVIDERS[provider].quota,
         {
-          headers:
-            provider === "codex"
-              ? {
-                  Authorization: `Bearer ${secret.accessToken}`,
-                  Accept: "application/json",
-                }
-              : oauthHeaders(provider, secret),
+          headers: oauthHeaders(provider, secret),
         },
         fetcher,
       ),
@@ -431,35 +327,25 @@ export function inferenceRequest(
       headers: {
         ...oauthHeaders(provider, secret),
         "Content-Type": "application/json",
-        ...(provider === "codex"
-          ? {
-              Accept: "text/event-stream",
-              originator: "codex_cli_rs",
-              "User-Agent": "codex_cli_rs/0.159.0",
-              version: "0.159.0",
-            }
-          : {}),
+        Accept: "text/event-stream",
+        originator: "codex_cli_rs",
+        "User-Agent": "codex_cli_rs/0.159.0",
+        version: "0.159.0",
       },
       body: JSON.stringify(
-        provider === "claude"
-          ? {
-              model,
-              max_tokens: 8,
-              messages: [{ role: "user", content: text }],
-            }
-          : {
-              model,
-              input: [
-                {
-                  type: "message",
-                  role: "user",
-                  content: [{ type: "input_text", text }],
-                },
-              ],
-              instructions: "Be concise.",
-              store: false,
-              stream: true,
+        {
+          model,
+          input: [
+            {
+              type: "message",
+              role: "user",
+              content: [{ type: "input_text", text }],
             },
+          ],
+          instructions: "Be concise.",
+          store: false,
+          stream: true,
+        },
       ),
       redirect: "error" as const,
       signal: AbortSignal.timeout(16000),
@@ -479,16 +365,6 @@ export async function invoke(
   const response = await (env
     ? upstreamFetch(env, request.url, request.init, fetcher)
     : fetcher(request.url, request.init));
-  if (provider === "claude") {
-    const data = await providerJSON(response);
-    if (
-      data.type !== "message" ||
-      !Array.isArray(data.content) ||
-      !["end_turn", "max_tokens", "stop_sequence"].includes(data.stop_reason)
-    )
-      throw new AppError("inference_unconfirmed", 502, response.status);
-    return;
-  }
   if (!response.ok) {
     await providerJSON(response);
     return;

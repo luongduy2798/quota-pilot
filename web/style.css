@@ -374,10 +374,6 @@ nav button span {
   flex-shrink: 0;
   letter-spacing: -0.5px;
 }
-.provider-icon.claude {
-  background: #3b2b25;
-  color: #e4a680;
-}
 .grow {
   flex: 1;
   min-width: 0;

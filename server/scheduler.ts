@@ -35,12 +35,6 @@ export async function saveSchedule(
   if (target.kind !== "oauth") throw new AppError("oauth_account_required");
   const enabled = flag(body.enabled, current ? !!current.enabled : true);
   if (enabled && !target.enabled) throw new AppError("account_disabled");
-  if (
-    enabled &&
-    target.provider === "claude" &&
-    env.CLAUDE_SCHEDULER_ENABLED !== "true"
-  )
-    throw new AppError("claude_scheduler_blocked", 409);
   const model = textField(body.model ?? current?.model, "model", 150);
   if (!PROVIDERS[oauthProvider(target.provider)].models.includes(model))
     throw new AppError("unsupported_model");
@@ -198,13 +192,6 @@ export async function execute(env: Env, execution: Execution, value: Schedule) {
         "skipped",
         "account_disabled_or_unsupported",
       );
-      return;
-    }
-    if (
-      target.provider === "claude" &&
-      env.CLAUDE_SCHEDULER_ENABLED !== "true"
-    ) {
-      await finish(env, execution, "skipped", "claude_scheduler_blocked");
       return;
     }
     if (target.cooldown_until && target.cooldown_until > now()) {

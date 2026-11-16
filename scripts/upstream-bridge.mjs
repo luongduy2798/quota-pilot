@@ -48,7 +48,7 @@ export async function startUpstreamBridge(port = 8789) {
               "-json",
               "-readonly",
               database,
-              "select provider,name,email,data from providerConnections where provider in ('claude','codex') and authType='oauth' limit 501",
+              "select provider,name,email,data from providerConnections where provider='codex' and authType='oauth' limit 501",
             ],
             { maxBuffer: 32 * 1024 * 1024 },
           );

@@ -4,7 +4,11 @@ export function b64(bytes: Uint8Array) {
   return btoa(String.fromCharCode(...bytes));
 }
 export function unb64(value: string) {
-  return Uint8Array.from(atob(value), (c) => c.charCodeAt(0));
+  const normalized = value.replaceAll("-", "+").replaceAll("_", "/");
+  return Uint8Array.from(
+    atob(normalized + "=".repeat((4 - (normalized.length % 4)) % 4)),
+    (c) => c.charCodeAt(0),
+  );
 }
 export function randomToken() {
   return b64(crypto.getRandomValues(new Uint8Array(32)))
@@ -68,28 +72,45 @@ export async function decrypt<T>(
   );
 }
 export async function passwordMatches(password: string, stored: string) {
+  if (stored.startsWith("hmac1:")) {
+    const [, salt, expected] = stored.split(":");
+    if (!salt || !expected) throw new AppError("server_not_configured", 503);
+    const key = await crypto.subtle.importKey(
+      "raw",
+      new TextEncoder().encode(password),
+      { name: "HMAC", hash: "SHA-256" },
+      false,
+      ["sign"],
+    );
+    let actual = new Uint8Array(
+      await crypto.subtle.sign("HMAC", key, unb64(salt)),
+    );
+    for (let count = 1; count < 1000; count++)
+      actual = new Uint8Array(await crypto.subtle.sign("HMAC", key, actual));
+    const target = unb64(expected);
+    let difference = actual.length ^ target.length;
+    actual.forEach((value, index) => {
+      difference |= value ^ target[index];
+    });
+    return difference === 0;
+  }
   const [iterations, salt, expected] = stored.split(":");
   if (+iterations < 100000 || +iterations > 600000 || !salt || !expected)
     throw new AppError("server_not_configured", 503);
   const key = await crypto.subtle.importKey(
     "raw",
     new TextEncoder().encode(password),
-    "PBKDF2",
+    { name: "HMAC", hash: "SHA-256" },
     false,
-    ["deriveBits"],
+    ["sign"],
   );
-  const actual = new Uint8Array(
-    await crypto.subtle.deriveBits(
-      {
-        name: "PBKDF2",
-        salt: unb64(salt),
-        iterations: +iterations,
-        hash: "SHA-256",
-      },
-      key,
-      256,
-    ),
-  );
+  const block = new Uint8Array([...unb64(salt), 0, 0, 0, 1]);
+  let value = new Uint8Array(await crypto.subtle.sign("HMAC", key, block));
+  const actual = new Uint8Array(value);
+  for (let count = 1; count < +iterations; count++) {
+    value = new Uint8Array(await crypto.subtle.sign("HMAC", key, value));
+    for (let index = 0; index < actual.length; index++) actual[index] ^= value[index];
+  }
   const target = unb64(expected);
   let difference = actual.length ^ target.length;
   actual.forEach((v, i) => {

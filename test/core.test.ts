@@ -63,7 +63,7 @@ test("custom provider connectivity check only requests models", async () => {
       method: init?.method || "GET",
       apiKey: new Headers(init?.headers).get("x-api-key"),
     });
-    return Response.json({ data: [{ id: "claude-test" }] });
+    return Response.json({ data: [{ id: "anthropic-test" }] });
   };
   const result = await testCustom(
     { baseUrl: "https://api.openai.com/v1" },
@@ -79,17 +79,10 @@ test("custom provider connectivity check only requests models", async () => {
       apiKey: "private-key",
     },
   ]);
-  assert.deepEqual(result.models, ["claude-test"]);
+  assert.deepEqual(result.models, ["anthropic-test"]);
 });
 
 test("quota parser preserves separate windows and rejects guessed Codex windows", () => {
-  const claude = normalizeQuota("claude", {
-    five_hour: { utilization: 37, resets_at: "2026-11-12T12:00:00Z" },
-    seven_day: { utilization: 52, resets_at: "2026-11-14T12:00:00Z" },
-  });
-  assert.equal(claude.window5h?.remaining, 63);
-  assert.equal(claude.weekly?.remaining, 48);
-  assert.notEqual(claude.window5h?.resetAt, claude.weekly?.resetAt);
   const codex = normalizeQuota("codex", {
     rate_limit: {
       primary_window: {
@@ -112,9 +105,6 @@ test("quota parser preserves separate windows and rejects guessed Codex windows"
     }),
     { window5h: { remaining: 50, limit: 100, resetAt: null }, weekly: null },
   );
-  assert.throws(() =>
-    normalizeQuota("claude", { five_hour: { utilization: 101 } }),
-  );
 });
 
 test("OAuth authorization URL uses state, PKCE challenge and real redirect URI", () => {
@@ -122,8 +112,6 @@ test("OAuth authorization URL uses state, PKCE challenge and real redirect URI",
     APP_ORIGIN: "https://quota.example",
     CODEX_REDIRECT_URI: "http://localhost:1455/auth/callback",
     CODEX_CLIENT_ID: "",
-    CLAUDE_REDIRECT_URI: "",
-    CLAUDE_CLIENT_ID: "",
   } as Env;
   const url = new URL(
     authURL("codex", config, "random-state", "pkce-challenge"),
@@ -131,7 +119,7 @@ test("OAuth authorization URL uses state, PKCE challenge and real redirect URI",
   assert.equal(url.searchParams.get("state"), "random-state");
   assert.equal(url.searchParams.get("code_challenge_method"), "S256");
   assert.equal(url.searchParams.get("redirect_uri"), config.CODEX_REDIRECT_URI);
-  assert.equal(new URL(PROVIDERS.claude.authorize).origin, "https://claude.ai");
+  assert.equal(new URL(PROVIDERS.codex.authorize).origin, "https://auth.openai.com");
 });
 
 test("Codex inference requires a completed response event and sends one request", async () => {

@@ -7,16 +7,13 @@ export interface Env {
   SESSION_SECRET: string;
   DEFAULT_TIMEZONE?: string;
   CUSTOM_PROVIDER_HOSTS?: string;
-  CLAUDE_SCHEDULER_ENABLED?: string;
   CODEX_REDIRECT_URI?: string;
-  CLAUDE_REDIRECT_URI?: string;
   CODEX_CLIENT_ID?: string;
-  CLAUDE_CLIENT_ID?: string;
   UPSTREAM_PROXY_URL?: string;
 }
-export type OAuthProvider = "claude" | "codex";
+export type OAuthProvider = "codex";
 export type Provider =
-  OAuthProvider | "openai-compatible" | "anthropic-compatible";
+  "codex" | "openai-compatible" | "anthropic-compatible";
 export interface Secret {
   accessToken?: string;
   refreshToken?: string;

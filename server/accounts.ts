@@ -47,7 +47,7 @@ export async function account(env: Env, id: string) {
   if (!value) throw new AppError("account_not_found", 404);
   return value;
 }
-export function publicAccount(value: Account, env: Env) {
+export function publicAccount(value: Account, _env: Env) {
   const {
     id,
     kind,
@@ -79,12 +79,7 @@ export function publicAccount(value: Account, env: Env) {
         ? "oauth-quota-supported"
         : "manual-or-provider-specific",
     schedulerSupported:
-      kind === "oauth" &&
-      (provider === "codex" || env.CLAUDE_SCHEDULER_ENABLED === "true"),
-    schedulerBlocker:
-      provider === "claude" && env.CLAUDE_SCHEDULER_ENABLED !== "true"
-        ? "Claude OAuth inference is deprecated in local 9Router. Operator verification required."
-        : null,
+      kind === "oauth" && provider === "codex",
     models:
       kind === "oauth"
         ? PROVIDERS[provider as OAuthProvider].models
@@ -420,7 +415,7 @@ export async function import9RouterAccounts(env: Env, values: unknown) {
     const source = item as Record<string, any>,
       data = source.data,
       provider = source.provider || "codex";
-    if (provider !== "claude" && provider !== "codex")
+    if (provider !== "codex")
       throw new AppError("invalid_import");
     if (
       typeof source.name !== "string" ||
@@ -433,19 +428,14 @@ export async function import9RouterAccounts(env: Env, values: unknown) {
       id_token: data.idToken,
       access_token: data.accessToken,
     });
-    const providerAccountId =
-      provider === "codex" ? data.providerSpecificData?.chatgptAccountId : null;
-    if (
-      provider === "codex" &&
-      (typeof providerAccountId !== "string" || !providerAccountId)
-    )
+    const providerAccountId = data.providerSpecificData?.chatgptAccountId;
+    if (typeof providerAccountId !== "string" || !providerAccountId)
       throw new AppError("oauth_identity_unavailable", 502);
-    const upstreamId =
-      provider === "codex" ? `${subject}:${providerAccountId}` : subject;
+    const upstreamId = `${subject}:${providerAccountId}`;
     const duplicateKey = `${provider}:${upstreamId}`;
     if (
       seen.has(duplicateKey) ||
-      (provider === "codex" && existingCodexIds.has(providerAccountId))
+      existingCodexIds.has(providerAccountId)
     ) {
       skipped++;
       continue;
