@@ -11,10 +11,10 @@ if (existsSync(path)) {
 const readline = createInterface({ input: stdin, output: stdout });
 try {
   const password = await readline.question(
-    "Choose admin password (16+ characters): ",
+    "Choose admin password: ",
   );
-  if (password.length < 16 || password.length > 500 || !/\S/.test(password))
-    throw Error("Password must be 16–500 characters.");
+  if (password.length < 1 || password.length > 500)
+    throw Error("Password must be 1–500 characters.");
   const salt = randomBytes(16);
   let hash = createHmac("sha256", password).update(salt).digest();
   for (let count = 1; count < 1000; count++)

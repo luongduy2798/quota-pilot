@@ -327,13 +327,30 @@ function App() {
         });
         if (!candidates.length)
           throw new Error("no_supported_oauth_accounts");
-        const result = await api<{ imported: string[]; skipped: number }>(
-          "/accounts/import-9router",
-          "POST",
-          { accounts: candidates },
-        );
-        imported = result.imported.length;
-        skipped = result.skipped;
+        const batches: any[][] = [],
+          encoder = new TextEncoder();
+        let batch: any[] = [];
+        for (const candidate of candidates) {
+          const next = [...batch, candidate];
+          if (
+            batch.length &&
+            encoder.encode(JSON.stringify({ accounts: next })).byteLength >
+              18000
+          ) {
+            batches.push(batch);
+            batch = [candidate];
+          } else batch = next;
+        }
+        if (batch.length) batches.push(batch);
+        for (const accounts of batches) {
+          const result = await api<{ imported: string[]; skipped: number }>(
+            "/accounts/import-9router",
+            "POST",
+            { accounts },
+          );
+          imported += result.imported.length;
+          skipped += result.skipped;
+        }
       } else {
         if (!localImportEnabled) throw new Error("local_import_unavailable");
         const response = await fetch("/api/accounts/import-9router-file", {
