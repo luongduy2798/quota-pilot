@@ -1,26 +1,19 @@
 import assert from "node:assert/strict";
 import { after, before, test } from "node:test";
-import { convertV4MiniflareOptions, Miniflare } from "miniflare";
 import { claimOccurrence, manualExecution } from "../server/scheduler";
-import type { Env, Schedule } from "../server/types";
+import type { Env, RequestContext, Schedule } from "../server/types";
 import { nextOccurrence } from "../server/time";
 import { readFile } from "node:fs/promises";
 import { pbkdf2Sync, randomBytes } from "node:crypto";
-import worker from "../server/index";
+import { handleRequest } from "../server/index";
 import { decrypt, encrypt } from "../server/security";
 import { account, credentials } from "../server/accounts";
+import { SQLiteDatabase } from "../server/node-db";
 
-const mf = new Miniflare(
-  convertV4MiniflareOptions({
-    modules: true,
-    script: 'export default { fetch(){ return new Response("ok") } }',
-    compatibilityDate: "2026-11-01",
-    d1Databases: ["DB"],
-  }),
-);
+const database = new SQLiteDatabase(":memory:");
 let env: Env;
 before(async () => {
-  env = (await mf.getBindings()) as unknown as Env;
+  env = { database } as unknown as Env;
   const migration = await readFile(
     new URL("../migrations/0001_initial.sql", import.meta.url),
     "utf8",
@@ -29,11 +22,12 @@ before(async () => {
     .split(";")
     .map((s) => s.trim())
     .filter(Boolean)) {
-    await env.DB.prepare(statement).run();
+    await env.database.prepare(statement).run();
   }
-  await env.DB.prepare(
-    "INSERT INTO accounts (id,kind,provider,name,secret,config,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?)",
-  )
+  await env.database
+    .prepare(
+      "INSERT INTO accounts (id,kind,provider,name,secret,config,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?)",
+    )
     .bind(
       "acct",
       "oauth",
@@ -46,13 +40,12 @@ before(async () => {
     )
     .run();
 });
-after(() => mf.dispose());
+after(() => database.close());
 
-test("atomic D1 occurrence claim allows one concurrent claimant and no duplicate", async () => {
+test("atomic SQLite occurrence claim allows one concurrent claimant and no duplicate", async () => {
   const occurrence = new Date(Date.now() - 60000).toISOString();
-  await env.DB.prepare(
-    "INSERT INTO schedules VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
-  )
+  await env.database
+    .prepare("INSERT INTO schedules VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)")
     .bind(
       "sched",
       "Daily",
@@ -90,17 +83,17 @@ test("atomic D1 occurrence claim allows one concurrent claimant and no duplicate
     claimOccurrence(env, schedule, at),
   ]);
   assert.equal(results.filter(Boolean).length, 1);
-  const count = await env.DB.prepare(
-    "SELECT count(*) n FROM executions WHERE schedule_id=? AND occurrence_at=?",
-  )
+  const count = await env.database
+    .prepare(
+      "SELECT count(*) n FROM executions WHERE schedule_id=? AND occurrence_at=?",
+    )
     .bind("sched", occurrence)
     .first<{ n: number }>();
   assert.equal(count?.n, 1);
   const again = await claimOccurrence(env, schedule, at);
   assert.equal(again, null);
-  const updated = await env.DB.prepare(
-    "SELECT next_run FROM schedules WHERE id=?",
-  )
+  const updated = await env.database
+    .prepare("SELECT next_run FROM schedules WHERE id=?")
     .bind("sched")
     .first<{ next_run: string }>();
   assert.equal(
@@ -111,9 +104,8 @@ test("atomic D1 occurrence claim allows one concurrent claimant and no duplicate
 
 test("occurrence more than five minutes late is recorded missed without inference", async () => {
   const occurrence = new Date(Date.now() - 360000).toISOString();
-  await env.DB.prepare(
-    "INSERT INTO schedules VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
-  )
+  await env.database
+    .prepare("INSERT INTO schedules VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)")
     .bind(
       "late",
       "Late",
@@ -147,9 +139,8 @@ test("occurrence more than five minutes late is recorded missed without inferenc
   } satisfies Schedule;
   const execution = await claimOccurrence(env, schedule, new Date());
   assert.equal(execution?.status, "missed");
-  const rows = await env.DB.prepare(
-    "SELECT status FROM executions WHERE schedule_id=?",
-  )
+  const rows = await env.database
+    .prepare("SELECT status FROM executions WHERE schedule_id=?")
     .bind("late")
     .all<{ status: string }>();
   assert.deepEqual(
@@ -164,7 +155,7 @@ test("authenticated API keeps provider secrets private and enforces origin, CSRF
   const hash = `310000:${salt.toString("base64")}:${pbkdf2Sync(password, salt, 310000, 32, "sha256").toString("base64")}`;
   const app = {
     ...env,
-    ASSETS: { fetch: async () => new Response("asset") },
+    assets: { fetch: async () => new Response("asset") },
     APP_ORIGIN: "http://localhost:8787",
     ADMIN_PASSWORD_HASH: hash,
     ENCRYPTION_KEY: Buffer.alloc(32, 9).toString("base64"),
@@ -172,7 +163,7 @@ test("authenticated API keeps provider secrets private and enforces origin, CSRF
     CUSTOM_PROVIDER_HOSTS: "api.openai.com",
     DEFAULT_TIMEZONE: "Asia/Ho_Chi_Minh",
   } as unknown as Env;
-  const context = { waitUntil() {} } as unknown as ExecutionContext;
+  const context = { waitUntil() {} } satisfies RequestContext;
   const request = (
     path: string,
     method = "GET",
@@ -181,7 +172,7 @@ test("authenticated API keeps provider secrets private and enforces origin, CSRF
     csrf = "",
     origin = "http://localhost:8787",
   ) =>
-    worker.fetch(
+    handleRequest(
       new Request(`http://localhost:8787/api${path}`, {
         method,
         headers: {
@@ -195,7 +186,7 @@ test("authenticated API keeps provider secrets private and enforces origin, CSRF
       app,
       context,
     );
-  const health = await worker.fetch(
+  const health = await handleRequest(
     new Request("http://localhost:8787/healthz"),
     app,
     context,
@@ -266,9 +257,10 @@ test("authenticated API keeps provider secrets private and enforces origin, CSRF
     false,
   );
   const stamp = new Date().toISOString();
-  await app.DB.prepare(
-    "INSERT INTO accounts (id,kind,provider,name,secret,config,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?)",
-  )
+  await app.database
+    .prepare(
+      "INSERT INTO accounts (id,kind,provider,name,secret,config,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?)",
+    )
     .bind(
       "codex-scheduler",
       "oauth",
@@ -397,9 +389,8 @@ test("authenticated API keeps provider secrets private and enforces origin, CSRF
       (tokenBodies[2] as Record<string, unknown>).refresh_token,
       "oauth-refresh",
     );
-    const stored = await app.DB.prepare(
-      "SELECT secret FROM accounts WHERE id=?",
-    )
+    const stored = await app.database
+      .prepare("SELECT secret FROM accounts WHERE id=?")
       .bind(createdOAuth.accountId)
       .first<{ secret: string }>();
     assert.ok(stored);
@@ -407,16 +398,18 @@ test("authenticated API keeps provider secrets private and enforces origin, CSRF
       await decrypt(stored.secret, app, `account:${createdOAuth.accountId}`),
       refreshed,
     );
-    const oauthCount = await app.DB.prepare(
-      "SELECT count(*) AS count FROM accounts WHERE provider='codex' AND identity IS NOT NULL",
-    ).first<{ count: number }>();
+    const oauthCount = await app.database
+      .prepare(
+        "SELECT count(*) AS count FROM accounts WHERE provider='codex' AND identity IS NOT NULL",
+      )
+      .first<{ count: number }>();
     assert.equal(oauthCount?.count, 1);
   } finally {
     globalThis.fetch = originalFetch;
   }
-  const scheduleRow = await app.DB.prepare(
-    "SELECT * FROM schedules WHERE name='Daily 07:00'",
-  ).first<Schedule>();
+  const scheduleRow = await app.database
+    .prepare("SELECT * FROM schedules WHERE name='Daily 07:00'")
+    .first<Schedule>();
   assert.ok(scheduleRow);
   const submissions = await Promise.all([
     manualExecution(app, scheduleRow!, crypto.randomUUID()),

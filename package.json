@@ -3,38 +3,35 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
+  "engines": {
+    "node": ">=22.5"
+  },
   "scripts": {
     "setup": "node scripts/setup.mjs",
-    "oauth:relay": "node scripts/oauth-relay.mjs",
-    "import:9router": "node scripts/import-9router.mjs",
-    "dev": "npm run build && npm run db:local && node scripts/local.mjs",
-    "db:local": "wrangler d1 migrations apply quota-pilot --local",
+    "dev": "npm run build && node --import tsx server/node.ts",
+    "start": "node --import tsx server/node.ts",
     "build": "vite build",
     "typecheck": "tsc --noEmit",
     "test": "tsx --test test/*.test.ts",
     "test:integration": "tsx --test test/*.integration.ts",
     "lint": "eslint server web test scripts",
     "format": "prettier --write server web test scripts *.json *.ts *.html docs/*.md README.md",
-    "format:check": "prettier --check server web test scripts *.json *.ts *.html docs/*.md README.md",
-    "check:worker": "wrangler deploy --dry-run --outdir dist/worker"
+    "format:check": "prettier --check server web test scripts *.json *.ts *.html docs/*.md README.md"
   },
   "dependencies": {
     "react": "^19.2.4",
     "react-dom": "^19.2.4"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^5.20261112.1",
     "@eslint/js": "^9.39.1",
     "@types/node": "^24.10.0",
     "@types/react": "^19.2.0",
     "@types/react-dom": "^19.2.0",
     "eslint": "^9.39.1",
-    "miniflare": "5.20261110.1-beta",
     "prettier": "^3.6.2",
     "tsx": "^4.20.6",
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.46.0",
-    "vite": "^7.1.12",
-    "wrangler": "^4.95.0"
+    "vite": "^7.1.12"
   }
 }

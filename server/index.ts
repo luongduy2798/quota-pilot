@@ -3,6 +3,7 @@ import {
   type Account,
   type Env,
   type Execution,
+  type RequestContext,
   type Schedule,
   classify,
   now,
@@ -26,6 +27,7 @@ import {
   deleteAccounts,
   finishOAuth,
   import9RouterAccounts,
+  import9RouterDatabase,
   publicAccount,
   quota,
   saveCustom,
@@ -52,31 +54,19 @@ const json = (
     status,
     headers: { "Content-Type": "application/json", ...headers },
   });
-function localImportBridge(value?: string) {
-  try {
-    const url = new URL(value || "");
-    return url.protocol === "http:" &&
-      url.port === "8789" &&
-      ["127.0.0.1", "localhost", "[::1]"].includes(url.hostname)
-      ? url
-      : null;
-  } catch {
-    return null;
-  }
-}
 async function route(
   request: Request,
   env: Env,
-  context: ExecutionContext,
+  context: RequestContext,
 ): Promise<Response> {
   const url = new URL(request.url),
     path = url.pathname,
     method = request.method;
   if (path === "/healthz") {
-    await env.DB.prepare("SELECT 1").first();
+    await env.database.prepare("SELECT 1").first();
     return json({ ok: true });
   }
-  if (!path.startsWith("/api/")) return env.ASSETS.fetch(request);
+  if (!path.startsWith("/api/")) return env.assets.fetch(request);
   if (!env.ENCRYPTION_KEY || !env.SESSION_SECRET || !env.ADMIN_PASSWORD_HASH)
     throw new AppError("server_not_configured", 503);
   const mutation = !["GET", "HEAD"].includes(method);
@@ -98,7 +88,6 @@ async function route(
     return json({
       csrf: current.csrf,
       timezone: env.DEFAULT_TIMEZONE || "Asia/Ho_Chi_Minh",
-      localImportEnabled: !!localImportBridge(env.UPSTREAM_PROXY_URL),
     });
   if (path === "/api/logout" && method === "POST") {
     await run(env, "DELETE FROM sessions WHERE id=?", current.id);
@@ -121,12 +110,8 @@ async function route(
       await import9RouterAccounts(env, (await jsonBody(request)).accounts),
     );
   if (path === "/api/accounts/import-9router-file" && method === "POST") {
-    const bridgeURL = localImportBridge(env.UPSTREAM_PROXY_URL);
-    if (
-      !bridgeURL ||
-      request.headers.get("Content-Type") !== "application/vnd.sqlite3"
-    )
-      throw new AppError("local_import_unavailable", 501);
+    if (request.headers.get("Content-Type") !== "application/vnd.sqlite3")
+      throw new AppError("invalid_import_file", 415);
     const reader = request.body?.getReader();
     if (!reader) throw new AppError("invalid_import_file");
     const chunks: Uint8Array[] = [];
@@ -151,19 +136,7 @@ async function route(
       file.set(chunk, offset);
       offset += chunk.byteLength;
     }
-    bridgeURL.pathname = "/import-9router";
-    bridgeURL.search = "";
-    const result = await fetch(bridgeURL, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/vnd.sqlite3",
-      },
-      body: file.buffer,
-    });
-    if (result.status === 501)
-      throw new AppError("local_import_unavailable", 501);
-    if (!result.ok) throw new AppError("invalid_9router_database", 400);
-    const { accounts } = (await result.json()) as { accounts: unknown[] };
+    const { accounts } = import9RouterDatabase(file);
     if (!Array.isArray(accounts) || accounts.length > 500)
       throw new AppError("invalid_import");
     const imported: string[] = [];
@@ -342,32 +315,40 @@ async function route(
     });
   throw new AppError("not_found", 404);
 }
-export default {
-  async fetch(request: Request, env: Env, context: ExecutionContext) {
-    let response: Response;
-    try {
-      response = await route(request, env, context);
-    } catch (error) {
-      response = json(
-        { error: classify(error) },
-        error instanceof AppError ? error.status : 500,
-      );
-    }
-    const headers = new Headers(response.headers);
-    headers.set("X-Content-Type-Options", "nosniff");
-    headers.set("X-Frame-Options", "DENY");
-    headers.set("Referrer-Policy", "no-referrer");
-    headers.set(
-      "Content-Security-Policy",
-      "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'",
+export async function handleRequest(
+  request: Request,
+  env: Env,
+  context: RequestContext,
+) {
+  let response: Response;
+  try {
+    response = await route(request, env, context);
+  } catch (error) {
+    response = json(
+      {
+        error: classify(error),
+        ...(error instanceof AppError && error.retryAfterSeconds
+          ? { retryAfter: error.retryAfterSeconds }
+          : {}),
+      },
+      error instanceof AppError ? error.status : 500,
     );
-    if (new URL(request.url).pathname.startsWith("/api/"))
-      headers.set("Cache-Control", "no-store");
-    if (env.APP_ORIGIN?.startsWith("https:"))
-      headers.set("Strict-Transport-Security", "max-age=31536000");
-    return new Response(response.body, { status: response.status, headers });
-  },
-  scheduled(_event: ScheduledEvent, env: Env, context: ExecutionContext) {
-    context.waitUntil(tick(env));
-  },
-};
+  }
+  const headers = new Headers(response.headers);
+  headers.set("X-Content-Type-Options", "nosniff");
+  headers.set("X-Frame-Options", "DENY");
+  headers.set("Referrer-Policy", "no-referrer");
+  headers.set(
+    "Content-Security-Policy",
+    "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'",
+  );
+  if (new URL(request.url).pathname.startsWith("/api/"))
+    headers.set("Cache-Control", "no-store");
+  if (env.APP_ORIGIN?.startsWith("https:"))
+    headers.set("Strict-Transport-Security", "max-age=31536000");
+  return new Response(response.body, { status: response.status, headers });
+}
+
+export function runScheduled(env: Env, context: RequestContext) {
+  context.waitUntil(tick(env));
+}

@@ -1,6 +1,6 @@
 export interface Env {
-  DB: D1Database;
-  ASSETS: Fetcher;
+  database: Database;
+  assets: StaticAssets;
   APP_ORIGIN: string;
   ADMIN_PASSWORD_HASH: string;
   ENCRYPTION_KEY: string;
@@ -9,11 +9,27 @@ export interface Env {
   CUSTOM_PROVIDER_HOSTS?: string;
   CODEX_REDIRECT_URI?: string;
   CODEX_CLIENT_ID?: string;
-  UPSTREAM_PROXY_URL?: string;
+}
+export interface PreparedStatement {
+  bind(...values: unknown[]): PreparedStatement;
+  run(): Promise<{ meta: { changes: number; last_row_id: number } }>;
+  first<T>(): Promise<T | null>;
+  all<T>(): Promise<{ results: T[] }>;
+}
+export interface Database {
+  prepare(sql: string): PreparedStatement;
+  batch(
+    statements: PreparedStatement[],
+  ): Promise<{ meta: { changes: number; last_row_id: number } }[]>;
+}
+export interface StaticAssets {
+  fetch(request: Request): Promise<Response>;
+}
+export interface RequestContext {
+  waitUntil(promise: Promise<unknown>): void;
 }
 export type OAuthProvider = "codex";
-export type Provider =
-  "codex" | "openai-compatible" | "anthropic-compatible";
+export type Provider = "codex" | "openai-compatible" | "anthropic-compatible";
 export interface Secret {
   accessToken?: string;
   refreshToken?: string;
@@ -92,6 +108,7 @@ export class AppError extends Error {
     public code: string,
     public status = 400,
     public httpStatus: number | null = null,
+    public retryAfterSeconds?: number,
   ) {
     super(code);
   }
@@ -99,17 +116,20 @@ export class AppError extends Error {
 export const now = () => new Date().toISOString();
 export const later = (ms: number) => new Date(Date.now() + ms).toISOString();
 export const query = <T>(env: Env, sql: string, ...args: unknown[]) =>
-  env.DB.prepare(sql)
+  env.database
+    .prepare(sql)
     .bind(...args)
     .first<T>();
 export const rows = async <T>(env: Env, sql: string, ...args: unknown[]) =>
   (
-    await env.DB.prepare(sql)
+    await env.database
+      .prepare(sql)
       .bind(...args)
       .all<T>()
   ).results;
 export const run = (env: Env, sql: string, ...args: unknown[]) =>
-  env.DB.prepare(sql)
+  env.database
+    .prepare(sql)
     .bind(...args)
     .run();
 export function classify(error: unknown) {

@@ -103,9 +103,47 @@ async function api<T = any>(
   if (!response.ok) {
     if (response.status === 401 && path !== "/login")
       window.dispatchEvent(new Event("session-expired"));
-    throw new Error(data.error || "request_failed");
+    const error = new Error(data.error || "request_failed") as Error & {
+      retryAfter?: number;
+    };
+    error.retryAfter =
+      typeof data.retryAfter === "number" ? data.retryAfter : undefined;
+    throw error;
   }
   return data;
+}
+const OAUTH_EXTENSION_PAGE_SOURCE = "quota-pilot-page";
+const OAUTH_EXTENSION_SOURCE = "quota-pilot-oauth-extension";
+function oauthExtensionRequest(type: string, state?: string) {
+  const nonce = crypto.randomUUID();
+  return new Promise<Record<string, any> | null>((resolve) => {
+    const timer = window.setTimeout(() => {
+      window.removeEventListener("message", receive);
+      resolve(null);
+    }, 800);
+    function receive(event: MessageEvent) {
+      if (
+        event.source !== window ||
+        event.origin !== window.location.origin ||
+        event.data?.source !== OAUTH_EXTENSION_SOURCE ||
+        event.data.nonce !== nonce
+      )
+        return;
+      window.clearTimeout(timer);
+      window.removeEventListener("message", receive);
+      resolve(event.data);
+    }
+    window.addEventListener("message", receive);
+    window.postMessage(
+      {
+        source: OAUTH_EXTENSION_PAGE_SOURCE,
+        type,
+        nonce,
+        ...(state ? { state } : {}),
+      },
+      window.location.origin,
+    );
+  });
 }
 function Badge({
   children,
@@ -226,8 +264,11 @@ function App() {
   const [error, setError] = useState(""),
     [notice, setNotice] = useState(""),
     [busy, setBusy] = useState(false),
-    [localImportEnabled, setLocalImportEnabled] = useState(false),
+    [runCooldowns, setRunCooldowns] = useState<Record<string, number>>({}),
     [clock, setClock] = useState(Date.now());
+  const [oauthExtensionInstalled, setOAuthExtensionInstalled] = useState<
+    boolean | null
+  >(null);
   const [custom, setCustom] = useState<Account | "new" | null>(null),
     [editSchedule, setEditSchedule] = useState<Schedule | "new" | null>(null),
     [logs, setLogs] = useState<{
@@ -251,7 +292,9 @@ function App() {
       api<Execution[]>("/executions"),
     ]);
     setAccounts(a);
-    setSelectedAccountIds((ids) => ids.filter((id) => a.some((account) => account.id === id)));
+    setSelectedAccountIds((ids) =>
+      ids.filter((id) => a.some((account) => account.id === id)),
+    );
     setQuotas(q);
     setSchedules(s);
     setExecutions(e);
@@ -272,7 +315,11 @@ function App() {
       else history.replaceState(null, "", window.location.pathname);
     }
   }, []);
-  async function action(work: () => Promise<unknown>, message = "") {
+  async function action(
+    work: () => Promise<unknown>,
+    message = "",
+    cooldownKey?: string,
+  ) {
     setBusy(true);
     setError("");
     setNotice("");
@@ -281,7 +328,18 @@ function App() {
       await reload();
       if (message) setNotice(message);
     } catch (err) {
-      setError((err as Error).message);
+      const failure = err as Error & { retryAfter?: number };
+      if (cooldownKey && failure.retryAfter) {
+        setRunCooldowns((values) => ({
+          ...values,
+          [cooldownKey]: Date.now() + failure.retryAfter! * 1000,
+        }));
+      }
+      setError(
+        failure.message === "run_rate_limited_or_busy"
+          ? `Tài khoản đang chạy hoặc vừa chạy. Thử lại sau ${failure.retryAfter || 30} giây.`
+          : failure.message,
+      );
     } finally {
       setBusy(false);
     }
@@ -302,8 +360,7 @@ function App() {
         if (!Array.isArray(backup.providerConnections))
           throw new Error("invalid_9router_backup");
         const candidates = backup.providerConnections.flatMap((row: any) => {
-          if (row?.authType !== "oauth" || row.provider !== "codex")
-            return [];
+          if (row?.authType !== "oauth" || row.provider !== "codex") return [];
           const data =
             typeof row.data === "string"
               ? JSON.parse(row.data)
@@ -327,8 +384,7 @@ function App() {
               ]
             : [];
         });
-        if (!candidates.length)
-          throw new Error("no_supported_oauth_accounts");
+        if (!candidates.length) throw new Error("no_supported_oauth_accounts");
         const batches: any[][] = [],
           encoder = new TextEncoder();
         let batch: any[] = [];
@@ -354,7 +410,6 @@ function App() {
           skipped += result.skipped;
         }
       } else {
-        if (!localImportEnabled) throw new Error("local_import_unavailable");
         const response = await fetch("/api/accounts/import-9router-file", {
           method: "POST",
           headers: {
@@ -363,10 +418,14 @@ function App() {
           },
           body: file,
         });
-        const result = await response.json();
+        const result = (await response.json()) as {
+          imported?: string[];
+          skipped?: number;
+          error?: string;
+        };
         if (!response.ok) throw new Error(result.error || "import_failed");
-        imported = result.imported.length;
-        skipped = result.skipped;
+        imported = result.imported?.length || 0;
+        skipped = result.skipped || 0;
       }
       await reload();
       setNotice(
@@ -384,10 +443,9 @@ function App() {
       csrf = "";
     };
     window.addEventListener("session-expired", expired);
-    api<{ csrf: string; localImportEnabled: boolean }>("/session")
+    api<{ csrf: string }>("/session")
       .then(async (current) => {
         csrf = current.csrf;
-        setLocalImportEnabled(current.localImportEnabled);
         setAuthenticated(true);
         await reload();
       })
@@ -468,6 +526,14 @@ function App() {
       return;
     }
     oauthPopup.current = popup;
+    const extension = await oauthExtensionRequest("extension-ping");
+    setOAuthExtensionInstalled(extension?.installed === true);
+    if (!extension?.installed) {
+      popup.close();
+      oauthPopup.current = null;
+      setError("Chưa cài OAuth extension. Cài extension rồi thử lại.");
+      return;
+    }
     await action(async () => {
       const pending = {
         ...(await api<PendingOAuth>(`/oauth/${provider}/start`, "POST", {
@@ -476,6 +542,8 @@ function App() {
         provider,
         accountId,
       };
+      const started = await oauthExtensionRequest("oauth-start", pending.state);
+      if (!started?.ok) throw new Error("oauth_extension_unavailable");
       setOAuth(pending);
       setCallback("");
       sessionStorage.setItem("qp_oauth", JSON.stringify(pending));
@@ -505,6 +573,7 @@ function App() {
     return () => window.removeEventListener("message", completed);
   }, [oauth]);
   function closeOAuth() {
+    if (oauth?.state) void oauthExtensionRequest("oauth-stop", oauth.state);
     oauthPopup.current?.close();
     oauthPopup.current = null;
     setOAuth(null);
@@ -593,9 +662,7 @@ function App() {
               )
             }
           />
-          <div
-            className="provider-icon"
-          >
+          <div className="provider-icon">
             {a.provider === "codex" ? "Cx" : "API"}
           </div>
           <div className="grow">
@@ -822,9 +889,7 @@ function App() {
               <div className="section-heading">
                 <div>
                   <h2>OAuth Providers</h2>
-                  <p>
-                    Kết nối Codex hoặc nhập từ file DB 9Router.
-                  </p>
+                  <p>Kết nối Codex hoặc nhập từ file DB 9Router.</p>
                 </div>
                 <div className="account-import">
                   <Badge>01 OAuth provider</Badge>
@@ -841,11 +906,7 @@ function App() {
                   />
                   <button
                     disabled={busy}
-                    title={
-                      localImportEnabled
-                        ? "Nhập account Codex từ backup JSON hoặc DB SQLite 9Router"
-                        : "Nhập account Codex từ backup JSON 9Router; DB SQLite chỉ có trên app local"
-                    }
+                    title="Nhập account Codex từ backup JSON hoặc DB SQLite 9Router"
                     onClick={() => importFile.current?.click()}
                   >
                     Import từ DB 9Router
@@ -870,6 +931,29 @@ function App() {
                   </div>
                 ))}
               </div>
+              {oauthExtensionInstalled === false && (
+                <div className="info-box">
+                  <strong>Chưa thấy OAuth extension.</strong>
+                  <span>
+                    Mở thư mục <code>extension/</code> trong project bằng{" "}
+                    <code>chrome://extensions</code> → Developer mode → Load{" "}
+                    unpacked, rồi tải lại dashboard.
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => window.open("chrome://extensions", "_blank")}
+                  >
+                    Mở Chrome Extensions
+                  </button>
+                  <a
+                    className="button"
+                    href="/quota-pilot-oauth-extension.zip"
+                    download
+                  >
+                    Tải extension
+                  </a>
+                </div>
+              )}
               <div className="account-grid">
                 <div className="account-selection-bar">
                   <label className="select-all">
@@ -1058,9 +1142,7 @@ function App() {
                                   <div className="quota-track">
                                     <progress
                                       max="100"
-                                      value={
-                                        remaining === null ? 0 : remaining
-                                      }
+                                      value={remaining === null ? 0 : remaining}
                                       aria-label={`${index === 0 ? "5-hour" : "Weekly"} quota remaining`}
                                       className={`${quotaTone(w || null)} ${remaining === null ? "unknown" : ""}`}
                                     />
@@ -1161,119 +1243,133 @@ function App() {
                       </tr>
                     </thead>
                     <tbody>
-                      {schedules.map((s) => (
-                        <tr key={s.id}>
-                          <td>
-                            <strong>{s.name}</strong>
-                            <small>
-                              {accounts.find((a) => a.id === s.accountId)
-                                ?.name || "Tài khoản không tồn tại"}
-                            </small>
-                          </td>
-                          <td>
-                            <code>{s.model}</code>
-                            <small>
-                              {s.skipIfActive
-                                ? "Skip khi xác minh cửa sổ 5h đang active"
-                                : "Preset: " + s.preset}
-                            </small>
-                          </td>
-                          <td>
-                            <strong>{s.localTime}</strong>
-                            <small>{s.timezone}</small>
-                            <small>
-                              {s.weekdays.length === 7
-                                ? "Hằng ngày"
-                                : s.weekdays.map((d) => days[d]).join(", ")}
-                            </small>
-                          </td>
-                          <td>
-                            {s.enabled
-                              ? format(s.nextRunAtUtc, s.timezone)
-                              : "Đã tắt"}
-                            <small>{s.timezone}</small>
-                          </td>
-                          <td>
-                            <Badge status={s.last_status || ""}>
-                              {s.last_status || "Chưa chạy"}
-                            </Badge>
-                            <small>{s.enabled ? "Enabled" : "Disabled"}</small>
-                          </td>
-                          <td>
-                            <div className="row-actions">
-                              <button onClick={() => setEditSchedule(s)}>
-                                Sửa
-                              </button>
-                              <button
-                                disabled={busy}
-                                onClick={() =>
-                                  action(() =>
-                                    api(`/schedules/${s.id}`, "PATCH", {
-                                      enabled: !s.enabled,
-                                    }),
-                                  )
-                                }
-                              >
-                                {s.enabled ? "Disable" : "Enable"}
-                              </button>
-                              <button
-                                disabled={
-                                  busy ||
-                                  executions.some(
-                                    (e) =>
-                                      e.schedule_id === s.id &&
-                                      e.status === "running",
-                                  )
-                                }
-                                onClick={() => {
-                                  if (
-                                    confirm(
-                                      `Run test now: gửi một inference thật qua ${s.model}. Thao tác này có thể tiêu thụ quota, không bảo đảm reset. Tiếp tục?`,
-                                    )
-                                  ) {
-                                    const key = crypto.randomUUID();
-                                    action(
-                                      () =>
-                                        api(
-                                          `/schedules/${s.id}/run-now`,
-                                          "POST",
-                                          { acknowledgeQuota: true },
-                                          { "Idempotency-Key": key },
-                                        ),
-                                      "Đã nhận lệnh chạy. Xem execution logs để biết kết quả.",
-                                    );
-                                  }
-                                }}
-                              >
-                                Run test now
-                              </button>
-                              <button
-                                onClick={() =>
-                                  setLogs({ title: s.name, scheduleId: s.id })
-                                }
-                              >
-                                View logs
-                              </button>
-                              <button
-                                className="danger-link"
-                                disabled={busy}
-                                onClick={() => {
-                                  if (
-                                    confirm(
-                                      `Xóa lịch ${s.name}? Lịch sử được giữ lại.`,
-                                    )
-                                  )
+                      {schedules.map((s) => {
+                        const cooldown = Math.max(
+                          0,
+                          Math.ceil(
+                            ((runCooldowns[s.accountId] || 0) - clock) / 1000,
+                          ),
+                        );
+                        return (
+                          <tr key={s.id}>
+                            <td>
+                              <strong>{s.name}</strong>
+                              <small>
+                                {accounts.find((a) => a.id === s.accountId)
+                                  ?.name || "Tài khoản không tồn tại"}
+                              </small>
+                            </td>
+                            <td>
+                              <code>{s.model}</code>
+                              <small>
+                                {s.skipIfActive
+                                  ? "Skip khi xác minh cửa sổ 5h đang active"
+                                  : "Preset: " + s.preset}
+                              </small>
+                            </td>
+                            <td>
+                              <strong>{s.localTime}</strong>
+                              <small>{s.timezone}</small>
+                              <small>
+                                {s.weekdays.length === 7
+                                  ? "Hằng ngày"
+                                  : s.weekdays.map((d) => days[d]).join(", ")}
+                              </small>
+                            </td>
+                            <td>
+                              {s.enabled
+                                ? format(s.nextRunAtUtc, s.timezone)
+                                : "Đã tắt"}
+                              <small>{s.timezone}</small>
+                            </td>
+                            <td>
+                              <Badge status={s.last_status || ""}>
+                                {s.last_status || "Chưa chạy"}
+                              </Badge>
+                              <small>
+                                {s.enabled ? "Enabled" : "Disabled"}
+                              </small>
+                            </td>
+                            <td>
+                              <div className="row-actions">
+                                <button onClick={() => setEditSchedule(s)}>
+                                  Sửa
+                                </button>
+                                <button
+                                  disabled={busy}
+                                  onClick={() =>
                                     action(() =>
-                                      api(`/schedules/${s.id}`, "DELETE"),
-                                    );
-                                }}
-                              >
-                                Xóa
-                              </button>
-                            </div>
-                          </td>
-                        </tr>
-                      ))}
+                                      api(`/schedules/${s.id}`, "PATCH", {
+                                        enabled: !s.enabled,
+                                      }),
+                                    )
+                                  }
+                                >
+                                  {s.enabled ? "Disable" : "Enable"}
+                                </button>
+                                <button
+                                  disabled={
+                                    busy ||
+                                    cooldown > 0 ||
+                                    executions.some(
+                                      (e) =>
+                                        e.schedule_id === s.id &&
+                                        e.status === "running",
+                                    )
+                                  }
+                                  onClick={() => {
+                                    if (
+                                      confirm(
+                                        `Run test now: gửi một inference thật qua ${s.model}. Thao tác này có thể tiêu thụ quota, không bảo đảm reset. Tiếp tục?`,
+                                      )
+                                    ) {
+                                      const key = crypto.randomUUID();
+                                      action(
+                                        () =>
+                                          api(
+                                            `/schedules/${s.id}/run-now`,
+                                            "POST",
+                                            { acknowledgeQuota: true },
+                                            { "Idempotency-Key": key },
+                                          ),
+                                        "Đã nhận lệnh chạy. Xem execution logs để biết kết quả.",
+                                        s.accountId,
+                                      );
+                                    }
+                                  }}
+                                >
+                                  {cooldown > 0
+                                    ? `Thử lại sau ${cooldown}s`
+                                    : "Run test now"}
+                                </button>
+                                <button
+                                  onClick={() =>
+                                    setLogs({ title: s.name, scheduleId: s.id })
+                                  }
+                                >
+                                  View logs
+                                </button>
+                                <button
+                                  className="danger-link"
+                                  disabled={busy}
+                                  onClick={() => {
+                                    if (
+                                      confirm(
+                                        `Xóa lịch ${s.name}? Lịch sử được giữ lại.`,
+                                      )
+                                    )
+                                      action(() =>
+                                        api(`/schedules/${s.id}`, "DELETE"),
+                                      );
+                                  }}
+                                >
+                                  Xóa
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>
@@ -1298,7 +1394,7 @@ function App() {
           <span>
             QUOTA PILOT <span className="muted">/ standalone</span>
           </span>
-          <span>Workers · D1 · Cron Triggers</span>
+          <span>Docker · SQLite · Scheduler</span>
         </footer>
       </main>
       {custom && (
@@ -1372,8 +1468,8 @@ function App() {
                   <code className="break">{oauth.redirectUri}</code>
                 </span>
                 <span>
-                  Production cần local callback relay trên máy đang mở trình
-                  duyệt.
+                  Provider callback về localhost. OAuth extension chuyển
+                  callback về dashboard.
                 </span>
                 <span>
                   Provider phải chấp nhận URI này. Nếu từ chối, cần OAuth
@@ -1607,9 +1703,7 @@ function ScheduleForm({
           ? [options[0].id]
           : [],
     ),
-    [model, setModel] = useState(
-      current?.model || options[0]?.models[0] || "",
-    ),
+    [model, setModel] = useState(current?.model || options[0]?.models[0] || ""),
     [localTime, setLocalTime] = useState(current?.localTime || "07:00"),
     [timezone, setTimezone] = useState(current?.timezone || "Asia/Ho_Chi_Minh"),
     [weekdays, setWeekdays] = useState(

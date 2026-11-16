@@ -119,7 +119,10 @@ test("OAuth authorization URL uses state, PKCE challenge and real redirect URI",
   assert.equal(url.searchParams.get("state"), "random-state");
   assert.equal(url.searchParams.get("code_challenge_method"), "S256");
   assert.equal(url.searchParams.get("redirect_uri"), config.CODEX_REDIRECT_URI);
-  assert.equal(new URL(PROVIDERS.codex.authorize).origin, "https://auth.openai.com");
+  assert.equal(
+    new URL(PROVIDERS.codex.authorize).origin,
+    "https://auth.openai.com",
+  );
 });
 
 test("Codex inference requires a completed response event and sends one request", async () => {

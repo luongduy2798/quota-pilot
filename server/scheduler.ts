@@ -125,7 +125,8 @@ export async function saveSchedules(env: Env, body: Record<string, any>) {
   const model = textField(body.model, "model", 150);
   if (
     targets.some(
-      (target) => !PROVIDERS[oauthProvider(target.provider)].models.includes(model),
+      (target) =>
+        !PROVIDERS[oauthProvider(target.provider)].models.includes(model),
     )
   )
     throw new AppError("unsupported_model");
@@ -141,23 +142,25 @@ export async function saveSchedules(env: Env, body: Record<string, any>) {
     next = nextOccurrence(time, timezone, weekdays, new Date()),
     stamp = now(),
     ids = accountIds.map(() => crypto.randomUUID());
-  await env.DB.batch(
+  await env.database.batch(
     ids.map((id, index) =>
-      env.DB.prepare("INSERT INTO schedules VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)").bind(
-        id,
-        name,
-        targets[index].id,
-        model,
-        time,
-        timezone,
-        JSON.stringify(weekdays),
-        +enabled,
-        +skip,
-        preset,
-        next,
-        stamp,
-        stamp,
-      ),
+      env.database
+        .prepare("INSERT INTO schedules VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)")
+        .bind(
+          id,
+          name,
+          targets[index].id,
+          model,
+          time,
+          timezone,
+          JSON.stringify(weekdays),
+          +enabled,
+          +skip,
+          preset,
+          next,
+          stamp,
+          stamp,
+        ),
     ),
   );
   return { ids };
@@ -196,24 +199,28 @@ export async function claimOccurrence(
     JSON.parse(value.weekdays),
     clock,
   );
-  // D1 batch is transactional. Only one replica inserts; advance before network I/O.
-  const result = await env.DB.batch([
-    env.DB.prepare(
-      `INSERT OR IGNORE INTO executions (id,schedule_id,account_id,schedule_name,occurrence_at,started_at,finished_at,status,model,error_code)
+  // SQLite batch is transactional. Advance before network I/O.
+  const result = await env.database.batch([
+    env.database
+      .prepare(
+        `INSERT OR IGNORE INTO executions (id,schedule_id,account_id,schedule_name,occurrence_at,started_at,finished_at,status,model,error_code)
       SELECT ?,id,account_id,name,next_run,?,?,?,model,? FROM schedules WHERE id=? AND enabled=1 AND next_run=? AND next_run<=?`,
-    ).bind(
-      id,
-      missed ? null : stamp,
-      missed ? stamp : null,
-      missed ? "missed" : "running",
-      missed ? "outside_grace_period" : null,
-      value.id,
-      value.next_run,
-      stamp,
-    ),
-    env.DB.prepare(
-      "UPDATE schedules SET next_run=? WHERE id=? AND next_run=? AND enabled=1",
-    ).bind(next, value.id, value.next_run),
+      )
+      .bind(
+        id,
+        missed ? null : stamp,
+        missed ? stamp : null,
+        missed ? "missed" : "running",
+        missed ? "outside_grace_period" : null,
+        value.id,
+        value.next_run,
+        stamp,
+      ),
+    env.database
+      .prepare(
+        "UPDATE schedules SET next_run=? WHERE id=? AND next_run=? AND enabled=1",
+      )
+      .bind(next, value.id, value.next_run),
   ]);
   return result[0].meta.changes
     ? query<Execution>(env, "SELECT * FROM executions WHERE id=?", id)
@@ -397,7 +404,7 @@ export async function manualExecution(env: Env, value: Schedule, key: string) {
     manualKey,
     value.id,
     value.account_id,
-    new Date(Date.now() - 60000).toISOString(),
+    new Date(Date.now() - 30000).toISOString(),
   );
   if (!result.meta.changes) {
     const duplicate = await query<Execution>(
@@ -406,7 +413,19 @@ export async function manualExecution(env: Env, value: Schedule, key: string) {
       manualKey,
     );
     if (duplicate) return { execution: duplicate, claimed: false };
-    throw new AppError("run_rate_limited_or_busy", 429);
+    const recent = await query<{ started_at: string; status: string }>(
+      env,
+      "SELECT started_at,status FROM executions WHERE account_id=? ORDER BY started_at DESC LIMIT 1",
+      value.account_id,
+    );
+    const age = recent?.started_at
+      ? Date.now() - Date.parse(recent.started_at)
+      : 0;
+    const retryAfter =
+      recent?.status === "running"
+        ? Math.max(1, Math.ceil((90000 - age) / 1000))
+        : Math.max(1, Math.ceil((30000 - age) / 1000));
+    throw new AppError("run_rate_limited_or_busy", 429, null, retryAfter);
   }
   return {
     execution: (await query<Execution>(
@@ -419,16 +438,22 @@ export async function manualExecution(env: Env, value: Schedule, key: string) {
 }
 export async function tick(env: Env, clock = new Date()) {
   const stamp = clock.toISOString();
-  await env.DB.batch([
-    env.DB.prepare(
-      "UPDATE executions SET status='failed',finished_at=?,error_code='interrupted_outcome_unknown_no_retry' WHERE status='running' AND started_at<?",
-    ).bind(stamp, new Date(clock.getTime() - 120000).toISOString()),
-    env.DB.prepare("DELETE FROM sessions WHERE expires_at<?").bind(stamp),
-    env.DB.prepare("DELETE FROM oauth_states WHERE expires_at<?").bind(stamp),
-    env.DB.prepare("DELETE FROM login_limits WHERE expires_at<?").bind(stamp),
+  await env.database.batch([
+    env.database
+      .prepare(
+        "UPDATE executions SET status='failed',finished_at=?,error_code='interrupted_outcome_unknown_no_retry' WHERE status='running' AND started_at<?",
+      )
+      .bind(stamp, new Date(clock.getTime() - 120000).toISOString()),
+    env.database.prepare("DELETE FROM sessions WHERE expires_at<?").bind(stamp),
+    env.database
+      .prepare("DELETE FROM oauth_states WHERE expires_at<?")
+      .bind(stamp),
+    env.database
+      .prepare("DELETE FROM login_limits WHERE expires_at<?")
+      .bind(stamp),
   ]);
   // ponytail: two occurrences per minute keep free-tier subrequests bounded.
-  // Use a paid queue worker if substantially higher schedule density is needed.
+  // Use a paid queue backend if substantially higher schedule density is needed.
   const due = await rows<Schedule>(
     env,
     "SELECT * FROM schedules WHERE enabled=1 AND next_run<=? ORDER BY next_run LIMIT 2",

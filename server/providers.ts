@@ -9,33 +9,13 @@ import {
 } from "./types";
 import { boundedText, checkPublicDNS, validateEndpoint } from "./security";
 
-export async function upstreamFetch(
-  env: Pick<Env, "UPSTREAM_PROXY_URL">,
+export function upstreamFetch(
+  _env: Env,
   url: string,
   init: RequestInit,
   fetcher: typeof fetch = fetch,
 ) {
-  if (!env.UPSTREAM_PROXY_URL) return fetcher(url, init);
-  const proxy = await fetcher(env.UPSTREAM_PROXY_URL, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      url,
-      method: init.method || "GET",
-      headers: Object.fromEntries(new Headers(init.headers).entries()),
-      body: typeof init.body === "string" ? init.body : null,
-    }),
-  });
-  if (!proxy.ok) throw new AppError("upstream_proxy_error", 502);
-  const result = (await proxy.json()) as {
-    status: number;
-    headers?: Record<string, string>;
-    body?: string;
-  };
-  return new Response(result.body || "", {
-    status: result.status,
-    headers: result.headers || {},
-  });
+  return fetcher(url, init);
 }
 
 export const PROVIDERS = {
@@ -63,8 +43,7 @@ export const PRESETS: Record<string, string> = {
   hello: "Say hello in one word.",
 };
 export function oauthProvider(value: string): OAuthProvider {
-  if (value !== "codex")
-    throw new AppError("unsupported_provider");
+  if (value !== "codex") throw new AppError("unsupported_provider");
   return "codex";
 }
 export function clientId(provider: OAuthProvider, env: Env) {
@@ -217,7 +196,7 @@ export async function identity(
   data: any,
   secret: Secret,
   _fetcher: typeof fetch = fetch,
-  _env?: Pick<Env, "UPSTREAM_PROXY_URL">,
+  _env?: Env,
 ) {
   // Tokens originate directly from the fixed TLS token endpoint, never browser input.
   const payload = claims(data.id_token || data.access_token),
@@ -298,7 +277,7 @@ export function oauthHeaders(
 export async function fetchQuota(
   provider: OAuthProvider,
   secret: Secret,
-  env: Pick<Env, "UPSTREAM_PROXY_URL"> = {},
+  env: Env,
   fetcher: typeof fetch = fetch,
 ) {
   return normalizeQuota(
@@ -336,21 +315,19 @@ export function inferenceRequest(
         "User-Agent": "codex_cli_rs/0.159.0",
         version: "0.159.0",
       },
-      body: JSON.stringify(
-        {
-          model,
-          input: [
-            {
-              type: "message",
-              role: "user",
-              content: [{ type: "input_text", text }],
-            },
-          ],
-          instructions: "Be concise.",
-          store: false,
-          stream: true,
-        },
-      ),
+      body: JSON.stringify({
+        model,
+        input: [
+          {
+            type: "message",
+            role: "user",
+            content: [{ type: "input_text", text }],
+          },
+        ],
+        instructions: "Be concise.",
+        store: false,
+        stream: true,
+      }),
       redirect: "error" as const,
       signal: AbortSignal.timeout(16000),
     },
@@ -362,7 +339,7 @@ export async function invoke(
   model: string,
   preset: string,
   fetcher: typeof fetch = fetch,
-  env?: Pick<Env, "UPSTREAM_PROXY_URL">,
+  env?: Env,
 ) {
   const request = inferenceRequest(provider, secret, model, preset);
   // One attempt only. HTTP 200 alone does not prove a successful inference.
@@ -407,8 +384,7 @@ export async function invoke(
     } catch {
       throw new AppError("inference_unconfirmed", 502);
     }
-    const type =
-      typeof event.type === "string" ? event.type : eventName;
+    const type = typeof event.type === "string" ? event.type : eventName;
     if (["response.failed", "response.incomplete", "error"].includes(type))
       throw new AppError("inference_failed", 502);
     if (

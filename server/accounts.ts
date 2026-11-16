@@ -37,6 +37,7 @@ import {
   testCustom,
   tokenSecret,
 } from "./providers";
+import { DatabaseSync } from "node:sqlite";
 
 export async function account(env: Env, id: string) {
   const value = await query<Account>(
@@ -53,9 +54,7 @@ export async function deleteAccounts(env: Env, values: unknown) {
     !values.length ||
     values.length > 500 ||
     values.some(
-      (id) =>
-        typeof id !== "string" ||
-        !/^[a-zA-Z0-9-]{1,100}$/.test(id),
+      (id) => typeof id !== "string" || !/^[a-zA-Z0-9-]{1,100}$/.test(id),
     )
   )
     throw new AppError("invalid_account_ids");
@@ -118,8 +117,7 @@ export function publicAccount(value: Account, _env: Env) {
       kind === "oauth"
         ? "oauth-quota-supported"
         : "manual-or-provider-specific",
-    schedulerSupported:
-      kind === "oauth" && provider === "codex",
+    schedulerSupported: kind === "oauth" && provider === "codex",
     models:
       kind === "oauth"
         ? PROVIDERS[provider as OAuthProvider].models
@@ -455,8 +453,7 @@ export async function import9RouterAccounts(env: Env, values: unknown) {
     const source = item as Record<string, any>,
       data = source.data,
       provider = source.provider || "codex";
-    if (provider !== "codex")
-      throw new AppError("invalid_import");
+    if (provider !== "codex") throw new AppError("invalid_import");
     if (
       typeof source.name !== "string" ||
       !data ||
@@ -473,10 +470,7 @@ export async function import9RouterAccounts(env: Env, values: unknown) {
       throw new AppError("oauth_identity_unavailable", 502);
     const upstreamId = `${subject}:${providerAccountId}`;
     const duplicateKey = `${provider}:${upstreamId}`;
-    if (
-      seen.has(duplicateKey) ||
-      existingCodexIds.has(providerAccountId)
-    ) {
+    if (seen.has(duplicateKey) || existingCodexIds.has(providerAccountId)) {
       skipped++;
       continue;
     }
@@ -532,6 +526,31 @@ export async function import9RouterAccounts(env: Env, values: unknown) {
     } else skipped++;
   }
   return { imported, skipped };
+}
+export function import9RouterDatabase(bytes: Uint8Array) {
+  if (Buffer.from(bytes).subarray(0, 16).toString() !== "SQLite format 3\0")
+    throw new AppError("invalid_9router_database", 400);
+  const database = new DatabaseSync(":memory:");
+  try {
+    database.deserialize(Buffer.from(bytes));
+    const accounts = database
+      .prepare(
+        "select provider,name,email,data from providerConnections where provider='codex' and authType='oauth' limit 501",
+      )
+      .all()
+      .map((row: any) => ({
+        provider: row.provider,
+        name: row.name || row.email || `${row.provider} account`,
+        data: JSON.parse(row.data),
+      }));
+    if (accounts.length > 500) throw new AppError("invalid_import", 413);
+    return { accounts };
+  } catch (error) {
+    if (error instanceof AppError) throw error;
+    throw new AppError("invalid_9router_database", 400);
+  } finally {
+    database.close();
+  }
 }
 export function publicQuota(row: QuotaRow | null, accountId: string) {
   return {

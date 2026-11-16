@@ -109,7 +109,8 @@ export async function passwordMatches(password: string, stored: string) {
   const actual = new Uint8Array(value);
   for (let count = 1; count < +iterations; count++) {
     value = new Uint8Array(await crypto.subtle.sign("HMAC", key, value));
-    for (let index = 0; index < actual.length; index++) actual[index] ^= value[index];
+    for (let index = 0; index < actual.length; index++)
+      actual[index] ^= value[index];
   }
   const target = unb64(expected);
   let difference = actual.length ^ target.length;

@@ -10,7 +10,7 @@
     "skipLibCheck": true,
     "allowImportingTsExtensions": true,
     "resolveJsonModule": true,
-    "types": ["@cloudflare/workers-types", "node", "vite/client"],
+    "types": ["node", "vite/client"],
     "noEmit": true
   },
   "include": ["server", "web", "test", "vite.config.ts"]

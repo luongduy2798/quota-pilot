@@ -1,0 +1,15 @@
+services:
+  quota-pilot:
+    build: .
+    env_file: .env
+    environment:
+      PORT: 8788
+      DB_PATH: /data/quota-pilot.sqlite
+    ports:
+      - "8788:8788"
+    volumes:
+      - quota-pilot-data:/data
+    restart: unless-stopped
+
+volumes:
+  quota-pilot-data:

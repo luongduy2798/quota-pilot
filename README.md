@@ -1,10 +1,26 @@
 # Quota Pilot
 
-Ứng dụng độc lập theo dõi tài khoản Codex, quota thật và lịch chạy inference do server xử lý. Gồm đúng ba tab: **Accounts**, **Quota Tracker**, **Scheduler**. React/Vite static assets + Cloudflare Workers + D1 + Cron Triggers; frontend không nhận API key hoặc OAuth token.
+Dashboard Codex gồm Accounts, Quota Tracker, Scheduler. Một Node service duy nhất: SQLite file, scheduler chạy trong process, gọi trực tiếp `auth.openai.com` và `chatgpt.com`. Docker là cách chạy local và production.
 
-## Chạy local
+## Ubuntu / Docker
 
-Yêu cầu Node.js 20.19+ (hoặc 22.12+) và npm.
+Yêu cầu Docker Engine và Docker Compose. SQLite dùng `node:sqlite`, nên chạy Node 22.5+ nếu chạy ngoài Docker.
+
+```sh
+npm run setup
+```
+
+Lệnh trên tạo `.env`, hỏi mật khẩu admin, sinh encryption key và session secret. Sửa `APP_ORIGIN` thành hostname HTTPS thật trước khi mở public. Giữ `CODEX_REDIRECT_URI=http://localhost:1455/auth/callback`; OAuth client hiện chỉ cho phép localhost.
+
+Chạy service:
+
+```sh
+docker compose up -d --build
+```
+
+SQLite nằm trong volume `quota-pilot-data`; restart hoặc deploy lại không mất account. Health check: `GET /healthz`. Cổng mặc định `8788`; đặt reverse proxy HTTPS phía trước nếu cần domain public.
+
+## Local development
 
 ```sh
 npm install
@@ -12,50 +28,30 @@ npm run setup
 npm run dev
 ```
 
-`npm run setup` hỏi password quản trị (không rỗng) và sinh `.dev.vars` chứa hash, AES-256-GCM key, session secret. File được tạo với mode `0600`, bị `.gitignore`; cần sao lưu `.dev.vars` an toàn vì mất encryption key khiến credentials đã lưu không đọc được. `npm run dev` build Vite, tạo DB D1 local độc lập, chạy Workers trên `http://127.0.0.1:8788` và gọi Cron endpoint mỗi phút (Wrangler không tự chạy Cron trong local mode). Trên deploy, Cloudflare Cron Trigger chạy độc lập với trình duyệt. Cổng cục bộ là `8788`; 9Router đang cài dùng cổng riêng. Tab Accounts hỗ trợ import Codex OAuth từ file backup JSON hoặc DB SQLite của 9Router; dừng 9Router trước khi đọc DB SQLite. Account trùng upstream ID được bỏ qua, credential đang có không bị ghi đè.
+Local cũng chạy đúng Node service, lưu DB ở `./data/quota-pilot.sqlite`, gọi upstream trực tiếp và tự chạy scheduler mỗi phút.
+
+`npm run dev` chạy dashboard và scheduler; OAuth callback dùng extension trong thư mục `extension/`.
 
 ## OAuth
 
-Tab Accounts → Connect. Đăng nhập ở provider, copy callback URL trên thanh địa chỉ và dán lại nếu trình duyệt không truy cập được loopback. Authorization code, PKCE verifier, đổi token và mã hóa credentials đều ở server. Tài khoản được nhận diện bằng upstream ID; reconnect không tạo trùng. Nhiều tài khoản cùng provider được tách riêng.
+Đăng nhập ở Accounts → Connect. Provider redirect về `http://localhost:1455/auth/callback`, vì OAuth client chỉ cho phép localhost. Tải `quota-pilot-oauth-extension.zip` từ dashboard, giải nén, rồi vào `chrome://extensions` → Developer mode → Load unpacked và chọn thư mục đã giải nén. Extension chỉ bắt callback localhost rồi chuyển `code/state` về dashboard; không xử lý quota hoặc credential. Không cần đăng ký redirect URI public. `CODEX_REDIRECT_URI` giữ nguyên `http://localhost:1455/auth/callback`.
 
-Codex dùng cùng flow cục bộ của 9Router/LCA: app mở popup, listener local tại `http://localhost:1455/auth/callback` nhận callback rồi chuyển vào Worker; popup tự đóng sau khi server đổi code. Nếu cổng 1455 đang do 9Router/LCA giữ, hãy đóng phiên OAuth đang chạy rồi khởi động lại app. Nếu OAuth app chấp nhận một callback khác, đặt `CODEX_REDIRECT_URI` đúng URI đã đăng ký; khi đó cần hoàn tất callback theo hướng dẫn thủ công. Hosted OAuth cần public HTTPS hostname và URI khớp registration trước khi connect.
+## Account và quota
 
-Với dashboard production, chạy relay trên máy đang mở trình duyệt: `npm run oauth:relay -- https://quota.chillix.me`. Relay nhận callback loopback rồi chuyển nguyên state/code vào callback production; không lưu credential.
+Credential mã hóa AES-256-GCM. Codex OAuth tự refresh khi token sắp hết hạn; refresh có lock để tránh nhiều request cùng đổi token. Quota lưu snapshot, giữ snapshot cũ khi upstream lỗi, cooldown request thủ công tối đa một lần/phút. Custom provider chỉ kiểm tra `GET /models`.
 
-Codex scheduler chỉ gửi inference thật qua Codex model registry.
+Accounts hỗ trợ import backup JSON hoặc DB SQLite 9Router trực tiếp trên server; file giới hạn 25 MB. Không cần cài `sqlite3` CLI.
 
-## Accounts và quota
+## Scheduler
 
-Chỉ hỗ trợ Codex OAuth và hai custom kind OpenAI-compatible/Anthropic-compatible. Credential mã hóa AES-256-GCM với ID bản ghi làm AAD, API luôn mask keys. Local app nhập Codex OAuth từ backup JSON hoặc DB SQLite của 9Router qua nút trong Accounts; account trùng upstream ID bị bỏ qua và token hiện có không bị ghi đè. Với DB SQLite, chọn `~/.9router/db/data.sqlite` sau khi tắt 9Router. OAuth quota được lưu theo account, trả `Unknown` nếu upstream không trả window; giữ snapshot cũ rõ `stale` khi poll lỗi. Poll thủ công tối đa một lần/phút, lỗi 429 có cooldown ba phút. Window 5h và weekly độc lập; reset hiển thị đúng timestamp upstream. Custom providers không có quota API tương thích chuẩn nên hiển thị `Not available`. Test cả hai loại custom provider gọi GET `/models`, không gửi inference.
+Process tick mỗi phút, claim occurrence bằng transaction SQLite và unique `(schedule_id, occurrence_at)`. Chạy trễ hơn năm phút thành `missed`; không catch-up. `Run test now` cần xác nhận quota, ghi execution history và không tự retry inference.
 
-Khai báo chính xác custom provider hostname trong `CUSTOM_PROVIDER_HOSTS`; mặc định chỉ có `api.openai.com` và `api.anthropic.com`. Chỉ HTTPS, host allowlist, DNS public, redirect tắt, không thể gọi localhost/private/internal IP. Provider khác cần thêm domain được kiểm soát vào allowlist. API key không được dùng cho scheduler.
+## Đổi mật khẩu
 
-## Scheduler và quota
-
-Ví dụ: tạo `07:00 Asia/Ho_Chi_Minh`, chọn account Codex, model có sẵn, chạy mỗi ngày. Server Cron chạy mỗi phút, lưu lần đến hạn bằng UTC, timezone-aware occurrence và unique `(schedule, occurrence)`. DST nonexistent time bị bỏ; repeated time chạy lần đầu. Chạy trễ tối đa 5 phút; chạy trễ hơn thành `missed`, không catch-up sau downtime. Tối đa hai occurrence mỗi phút trên free plan.
-
-Mỗi lần chạy gửi tối đa một request inference ngắn. `Run test now` cảnh báo quota consumption, có xác nhận và idempotency key. Lỗi HTTP/quota/auth/network không tự retry. Request có thể tới provider nhưng trả timeout sẽ được ghi failure/unknown; app không tuyên bố thành công hoặc tự gửi lại. Kết quả thành công nghĩa inference thành công, không chứng minh cửa sổ quota mới. Lịch sử chỉ lưu mã lỗi chuẩn hóa, HTTP status và quota snapshot, không lưu prompt/response/tokens.
-
-Không có quota reset/purchased credit API, account rotation, chain lịch tự động, external notifications hoặc generic proxy gateway.
-
-## Kiểm tra
+Tạo hash mới bằng `npm run setup` trên thư mục khác, sau đó thay `ADMIN_PASSWORD_HASH` trong `.env` và chạy:
 
 ```sh
-npm run format:check
-npm run lint
-npm run typecheck
-npm test
-npm run build
-npm run check:worker
-npm run test:integration
+docker compose up -d
 ```
 
-Test integration chạy Cloudflare Miniflare local, độc lập DB production. Không có test inference thật; provider OAuth cần kiểm thử thủ công một lần với tài khoản riêng trước khi lập lịch.
-
-## Cloudflare free tier và domain
-
-Workers phục vụ web/API; D1 lưu accounts, schedules, history; Cron Triggers thức worker mỗi phút kể cả khi không mở trang. Free tier từng giới hạn Cron Trigger chạy thấp nhất một phút và D1 theo mức gói hiện hành; xác minh dashboard billing quota trước deployment. Network egress và provider OAuth sẽ được edge thực thi.
-
-Khi yêu cầu deploy: tạo database `quota-pilot`, chạy `wrangler d1 migrations apply quota-pilot --remote`, cập nhật `database_id`, gán custom domain `quota.chillix.me`, đặt `APP_ORIGIN=https://quota.chillix.me`, tạo secrets `ADMIN_PASSWORD_HASH`, `ENCRYPTION_KEY`, `SESSION_SECRET` bằng Cloudflare secrets, xác minh OAuth redirect registration, deploy Worker. Root `chillix.me` thuộc Chillix License Server. Không chạy bất cứ bước production/deploy nào trong quá trình local setup.
-
-HTTPS public access bắt buộc ngoài local. Đổi mật khẩu local: dừng Worker, thay ADMIN_PASSWORD_HASH bằng hash mới tạo theo scripts/setup.mjs, xóa các session cũ trong D1 local. Trên Cloudflare, cập nhật secret và xóa sessions trong production D1 bằng D1 console. Không gửi `.dev.vars` qua chat/log. 9Router source license mapping ở [`docs/EXTRACTION_MAP.md`](docs/EXTRACTION_MAP.md); MIT notice ở [`licenses/9router-MIT.txt`](licenses/9router-MIT.txt).
+Xóa session cũ bằng cách xóa file SQLite chỉ khi chấp nhận mất toàn bộ account, lịch và history.
