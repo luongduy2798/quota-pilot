@@ -290,7 +290,8 @@ export function oauthHeaders(
     Accept: "application/json",
     Origin: "https://chatgpt.com",
     Referer: "https://chatgpt.com/",
-    "User-Agent": "Mozilla/5.0",
+    originator: "codex_cli_rs",
+    "User-Agent": "codex_cli_rs/0.159.0",
     ...(secret.accountId ? { "ChatGPT-Account-ID": secret.accountId } : {}),
   };
 }
