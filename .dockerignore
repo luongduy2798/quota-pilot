@@ -2,6 +2,8 @@ node_modules
 dist
 data
 .env
+deploy/cloudflared.yml
+deploy/cloudflared-credentials.json
 .dev.vars
 .git
 .gitignore

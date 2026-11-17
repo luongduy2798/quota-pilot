@@ -1,6 +1,8 @@
 node_modules/
 dist/
 .env
+deploy/cloudflared.yml
+deploy/cloudflared-credentials.json
 data/
 test-results/
 playwright-report/

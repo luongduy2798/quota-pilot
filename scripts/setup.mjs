@@ -37,6 +37,8 @@ try {
       "CODEX_CLIENT_ID=",
       "PORT=8788",
       "DB_PATH=./data/quota-pilot.sqlite",
+      `QUOTA_PILOT_UID=${process.getuid?.() ?? 1000}`,
+      `QUOTA_PILOT_GID=${process.getgid?.() ?? 1000}`,
     ].join("\n") + "\n";
   writeFileSync(path, vars, { mode: 0o600, flag: "wx" });
   const digest = createHash("sha256").update(key).digest("hex").slice(0, 8);

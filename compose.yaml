@@ -6,10 +6,32 @@ services:
       PORT: 8788
       DB_PATH: /data/quota-pilot.sqlite
     ports:
-      - "8788:8788"
+      - "127.0.0.1:8788:8788"
     volumes:
       - quota-pilot-data:/data
     restart: unless-stopped
+
+  cloudflared:
+    image: cloudflare/cloudflared:2026.9.1
+    profiles: ["tunnel"]
+    restart: unless-stopped
+    user: "${QUOTA_PILOT_UID:-1000}:${QUOTA_PILOT_GID:-1000}"
+    command: ["tunnel", "--no-autoupdate", "--config", "/etc/cloudflared/config.yml", "run"]
+    volumes:
+      - type: bind
+        source: ./deploy/cloudflared.yml
+        target: /etc/cloudflared/config.yml
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./deploy/cloudflared-credentials.json
+        target: /etc/cloudflared/credentials.json
+        read_only: true
+        bind:
+          create_host_path: false
+    depends_on:
+      - quota-pilot
 
 volumes:
   quota-pilot-data:

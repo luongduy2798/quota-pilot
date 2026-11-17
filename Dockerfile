@@ -1,11 +1,11 @@
-FROM node:22-bookworm-slim AS build
+FROM node:24.16-bookworm-slim AS build
 WORKDIR /app
 COPY package*.json ./
 RUN npm ci
 COPY . .
 RUN npm run build
 
-FROM node:22-bookworm-slim
+FROM node:24.16-bookworm-slim
 WORKDIR /app
 ENV NODE_ENV=production PORT=8788 DB_PATH=/data/quota-pilot.sqlite
 COPY --from=build /app/package*.json ./
