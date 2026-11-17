@@ -358,7 +358,7 @@ export async function invoke(
   // Codex currently labels its SSE response as text/plain;charset=UTF-8.
   if (
     !response.body ||
-    !["text/event-stream", "text/plain"].includes(contentType || "")
+    (contentType && !["text/event-stream", "text/plain"].includes(contentType))
   )
     throw new AppError("inference_unconfirmed", 502, response.status);
   const reader = response.body.getReader(),
