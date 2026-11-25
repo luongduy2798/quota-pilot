@@ -76,11 +76,13 @@ npm run dev
 
 Local cũng chạy đúng Node service, lưu DB ở `./data/quota-pilot.sqlite`, gọi upstream trực tiếp và tự chạy scheduler mỗi phút.
 
-`npm run dev` chạy dashboard và scheduler; OAuth callback dùng extension trong thư mục `extension/`.
-
 ## OAuth
 
-Đăng nhập ở Accounts → Connect. Provider redirect về `http://localhost:1455/auth/callback`, vì OAuth client chỉ cho phép localhost. Tải `quota-pilot-oauth-extension.zip` từ dashboard, giải nén, rồi vào `chrome://extensions` → Developer mode → Load unpacked và chọn thư mục đã giải nén. Extension chỉ bắt callback localhost rồi chuyển `code/state` về dashboard; không xử lý quota hoặc credential. Không cần đăng ký redirect URI public. `CODEX_REDIRECT_URI` giữ nguyên `http://localhost:1455/auth/callback`.
+1. Clone hoặc tải repo [OpenAI OAuth Relay](https://github.com/luongduy2798/openai-oauth-relay). Mở `chrome://extensions`, bật **Developer mode**, chọn **Load unpacked** rồi chọn thư mục repo.
+2. Trong OpenAI OAuth Relay, thêm địa chỉ dashboard đang dùng, kèm cổng nếu có. Cấp quyền Chrome, bật relay rồi tải lại dashboard.
+3. Vào **Accounts** và bấm **Connect** để đăng nhập Codex.
+
+Giữ `CODEX_REDIRECT_URI` là `http://localhost:1455/auth/callback`. OpenAI OAuth Relay chuyển callback từ localhost về dashboard.
 
 ## Account và quota
 

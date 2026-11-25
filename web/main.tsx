@@ -531,7 +531,7 @@ function App() {
     if (!extension?.installed) {
       popup.close();
       oauthPopup.current = null;
-      setError("Chưa cài OAuth extension. Cài extension rồi thử lại.");
+      setError("Hãy cài OpenAI OAuth Relay hoặc bật relay cho dashboard này.");
       return;
     }
     await action(async () => {
@@ -933,24 +933,18 @@ function App() {
               </div>
               {oauthExtensionInstalled === false && (
                 <div className="info-box">
-                  <strong>Chưa thấy OAuth extension.</strong>
+                  <strong>Chưa thấy OpenAI OAuth Relay.</strong>
                   <span>
-                    Mở thư mục <code>extension/</code> trong project bằng{" "}
-                    <code>chrome://extensions</code> → Developer mode → Load{" "}
-                    unpacked, rồi tải lại dashboard.
+                    Cài extension từ GitHub, thêm domain của dashboard, bật
+                    relay rồi tải lại trang.
                   </span>
-                  <button
-                    type="button"
-                    onClick={() => window.open("chrome://extensions", "_blank")}
-                  >
-                    Mở Chrome Extensions
-                  </button>
                   <a
                     className="button"
-                    href="/quota-pilot-oauth-extension.zip"
-                    download
+                    href="https://github.com/luongduy2798/openai-oauth-relay"
+                    target="_blank"
+                    rel="noopener noreferrer"
                   >
-                    Tải extension
+                    Mở repo GitHub
                   </a>
                 </div>
               )}
@@ -1468,7 +1462,7 @@ function App() {
                   <code className="break">{oauth.redirectUri}</code>
                 </span>
                 <span>
-                  Provider callback về localhost. OAuth extension chuyển
+                  Provider callback về localhost. OpenAI OAuth Relay chuyển
                   callback về dashboard.
                 </span>
                 <span>
