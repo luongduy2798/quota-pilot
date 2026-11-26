@@ -4,6 +4,7 @@ data
 .env
 deploy/cloudflared.yml
 deploy/cloudflared-credentials.json
+deploy/.cloudflared-credentials.*/
 .dev.vars
 .git
 .gitignore

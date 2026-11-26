@@ -19,7 +19,7 @@ cd quota-pilot
 make setup
 ```
 
-`make setup` tạo `.env` quyền `0600` với mật khẩu admin đã băm, key, session secret, origin `https://quota.chillix.me`, UID/GID của người chạy và `COMPOSE_PROFILES=tunnel`. Với bản cài hiện có, thêm hoặc cập nhật `COMPOSE_PROFILES=tunnel` trong `.env`. Giữ `CODEX_REDIRECT_URI=http://localhost:1455/auth/callback`.
+`make setup` tạo `.env` quyền `0600` với mật khẩu admin đã băm, key, session secret, origin `https://quota.chillix.me` và UID/GID của người chạy. Lệnh giữ `.env` hiện có và chuẩn bị `deploy/cloudflared.yml` từ mẫu nếu thiếu. Profile `tunnel` bật mặc định. Đặt `COMPOSE_PROFILES=` trong `.env` để chỉ chạy local. Giữ `CODEX_REDIRECT_URI=http://localhost:1455/auth/callback`.
 
 Tạo tunnel riêng cho Quota Pilot:
 
@@ -28,15 +28,11 @@ cloudflared tunnel login
 cloudflared tunnel create quota-pilot
 ```
 
-Mở URL đăng nhập được in ra bằng trình duyệt trên máy cá nhân, chọn zone `chillix.me`. Thay `<TUNNEL_UUID>` bên dưới bằng UUID vừa tạo:
+Mở URL đăng nhập được in ra bằng trình duyệt trên máy cá nhân, chọn zone `chillix.me`. Trỏ DNS vào tunnel vừa tạo rồi khởi động:
 
 ```sh
-TUNNEL_ID=<TUNNEL_UUID>
-install -m 600 "$HOME/.cloudflared/$TUNNEL_ID.json" deploy/cloudflared-credentials.json
-sed "s/REPLACE_WITH_TUNNEL_UUID/$TUNNEL_ID/" deploy/cloudflared.example.yml > deploy/cloudflared.yml
-chmod 600 deploy/cloudflared.yml
 cloudflared tunnel route dns quota-pilot quota.chillix.me
-make run
+make up
 ```
 
 Nếu `quota.chillix.me` đang có bản ghi DNS cũ, thay riêng bản ghi đó để trỏ tunnel mới; không sửa root `chillix.me` hay hostname của Viora. Tunnel và credential riêng của Quota Pilot không dùng chung với Viora. Credential và cấu hình tunnel được loại khỏi Git và Docker build context.
@@ -47,20 +43,13 @@ Mở `https://quota.chillix.me`; kiểm tra service bằng `https://quota.chilli
 
 ```sh
 cd quota-pilot
-make upgrade
-make logs
+make pull
+make ps
 ```
 
-`make upgrade` pull bằng `--ff-only`, build và cập nhật container. SQLite nằm trong named volume `quota-pilot-data`; restart/deploy giữ nguyên account, lịch và history. Giữ nguyên `.env`, nhất là `ENCRYPTION_KEY`; không dùng `docker compose down -v` nếu cần giữ dữ liệu. Cổng host chỉ bind `127.0.0.1:8788`.
+`make pull` cập nhật Git bằng `--ff-only` rồi gọi `make upgrade`. `make upgrade` triển khai code đang có và tạo lại connector nếu profile `tunnel` đang bật. `make run` là bí danh của `make up`. Dùng `make build` để chỉ build, `make logs` để xem log, `make restart` để khởi động lại container và `make down` để dừng stack. Dữ liệu SQLite nằm trong volume `quota-pilot-data`. Giữ `.env`, nhất là `ENCRYPTION_KEY`. Cổng host bind `127.0.0.1:8788`.
 
-`make run` và `make upgrade` chỉ báo thành công khi app trả `/healthz` và `cloudflared` đã kết nối tới Cloudflare. Nếu app đang chạy nhưng domain trả `1033`, khởi động riêng tunnel và kiểm tra log:
-
-```sh
-docker compose --profile tunnel up -d --no-deps cloudflared
-docker compose --profile tunnel logs --tail=60 cloudflared
-```
-
-Nếu log báo thiếu file hoặc quyền đọc, kiểm tra `deploy/cloudflared.yml` và `deploy/cloudflared-credentials.json`. Dùng UUID của tunnel `quota-pilot` hiện có và quyền đọc cho `QUOTA_PILOT_UID`/`QUOTA_PILOT_GID` trong `.env`.
+`make up` và `make upgrade` chờ `/healthz` rồi gọi `make tunnel` khi profile `tunnel` đang bật. `make tunnel` có thể chạy riêng khi app đã chạy. Lần đầu, lệnh điền UUID của `quota-pilot` vào cấu hình từ mẫu. Khi thiếu credential hoặc Cloudflare báo `Invalid tunnel secret`, lệnh lấy lại credential cho UUID đã xác nhận và tạo lại riêng `cloudflared`. Dùng cùng user đã chạy `make setup` và đã đăng nhập CLI Cloudflare trên Ubuntu.
 
 ### Sao lưu SQLite
 
