@@ -299,22 +299,6 @@ function App() {
     setSchedules(s);
     setExecutions(e);
   }
-  useEffect(() => {
-    const hash = new URLSearchParams(window.location.hash.slice(1));
-    const state = hash.get("state");
-    if (hash.get("oauth") && state) {
-      window.opener?.postMessage(
-        {
-          type: "quota-pilot-oauth",
-          state,
-          error: hash.get("error"),
-        },
-        window.location.origin,
-      );
-      if (window.opener) window.close();
-      else history.replaceState(null, "", window.location.pathname);
-    }
-  }, []);
   async function action(
     work: () => Promise<unknown>,
     message = "",
@@ -561,12 +545,12 @@ function App() {
       )
         return;
       if (event.data.error) {
-        closeOAuth();
         setError(event.data.error);
       } else {
         closeOAuth();
+        setError("");
         setNotice("Đã kết nối OAuth.");
-        void reload().catch((err) => setError(err.message));
+        void reload().catch(() => setNotice("Đã kết nối OAuth. Tải lại trang để cập nhật danh sách."));
       }
     };
     window.addEventListener("message", completed);

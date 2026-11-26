@@ -155,7 +155,7 @@ test("authenticated API keeps provider secrets private and enforces origin, CSRF
   const hash = `310000:${salt.toString("base64")}:${pbkdf2Sync(password, salt, 310000, 32, "sha256").toString("base64")}`;
   const app = {
     ...env,
-    assets: { fetch: async () => new Response("asset") },
+    assets: { fetch: async (request: Request) => new Response(new URL(request.url).pathname) },
     APP_ORIGIN: "http://localhost:8787",
     ADMIN_PASSWORD_HASH: hash,
     ENCRYPTION_KEY: Buffer.alloc(32, 9).toString("base64"),
@@ -193,6 +193,17 @@ test("authenticated API keeps provider secrets private and enforces origin, CSRF
   );
   assert.equal(health.status, 200);
   assert.equal((await request("/accounts")).status, 401);
+  const popup = await request("/oauth/codex/callback?code=synthetic-code");
+  assert.equal(popup.status, 200);
+  assert.match(popup.headers.get("Content-Type")!, /^text\/html/);
+  assert.equal(popup.headers.get("Cache-Control"), "no-store");
+  const popupHtml = await popup.text();
+  assert.match(popupHtml, /Đang hoàn tất đăng nhập/);
+  assert.doesNotMatch(popupHtml, /synthetic-code/);
+  const popupScript = await request("/oauth/codex/callback.js");
+  assert.equal(await popupScript.text(), "/oauth-callback.js");
+  assert.equal(popupScript.headers.get("Cache-Control"), "no-store");
+  assert.equal((await request("/oauth/codex/complete", "POST", {})).status, 401);
   const login = await request("/login", "POST", { password });
   assert.equal(login.status, 200);
   const cookie = login.headers.get("Set-Cookie")!.split(";")[0];

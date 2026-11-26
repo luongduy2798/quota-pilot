@@ -69,6 +69,27 @@ async function route(
   if (!path.startsWith("/api/")) return env.assets.fetch(request);
   if (!env.ENCRYPTION_KEY || !env.SESSION_SECRET || !env.ADMIN_PASSWORD_HASH)
     throw new AppError("server_not_configured", 503);
+  if (path === "/api/oauth/codex/callback.js" && method === "GET")
+    return env.assets.fetch(new Request(new URL("/oauth-callback.js", url)));
+  if (path === "/api/oauth/codex/callback" && method === "GET")
+    return new Response(
+      `<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Đăng nhập Quota Pilot</title>
+    <script src="/api/oauth/codex/callback.js" defer></script>
+  </head>
+  <body>
+    <main>
+      <h1>Đăng nhập Quota Pilot</h1>
+      <p role="status">Đang hoàn tất đăng nhập…</p>
+    </main>
+  </body>
+</html>`,
+      { headers: { "Content-Type": "text/html; charset=utf-8" } },
+    );
   const mutation = !["GET", "HEAD"].includes(method);
   if (mutation) originCheck(request, env);
   if (path === "/api/login" && method === "POST") {
@@ -151,9 +172,7 @@ async function route(
     }
     return json({ imported, skipped });
   }
-  const oauth = path.match(
-    /^\/api\/oauth\/(codex)\/(start|callback|complete)$/,
-  );
+  const oauth = path.match(/^\/api\/oauth\/(codex)\/(start|complete)$/);
   if (oauth) {
     const provider = oauthProvider(oauth[1]);
     if (oauth[2] === "start" && method === "POST")
@@ -164,35 +183,6 @@ async function route(
       return json(
         await finishOAuth(env, provider, current, await jsonBody(request)),
       );
-    if (oauth[2] === "callback" && method === "GET") {
-      if (url.searchParams.has("error"))
-        return new Response(null, {
-          status: 303,
-          headers: {
-            Location: `${env.APP_ORIGIN}/#oauth=${oauth[1]}&state=${encodeURIComponent(url.searchParams.get("state") || "")}&error=oauth_denied`,
-          },
-        });
-      const state = url.searchParams.get("state") || "";
-      try {
-        await finishOAuth(env, provider, current, {
-          code: url.searchParams.get("code"),
-          state,
-        });
-        return new Response(null, {
-          status: 303,
-          headers: {
-            Location: `${env.APP_ORIGIN}/#oauth=${provider}&state=${encodeURIComponent(state)}`,
-          },
-        });
-      } catch (error) {
-        return new Response(null, {
-          status: 303,
-          headers: {
-            Location: `${env.APP_ORIGIN}/#oauth=${provider}&state=${encodeURIComponent(state)}&error=${encodeURIComponent(classify(error))}`,
-          },
-        });
-      }
-    }
   }
   const accountRoute = path.match(
     /^\/api\/accounts\/([a-zA-Z0-9-]+)(?:\/(test|refresh))?$/,
