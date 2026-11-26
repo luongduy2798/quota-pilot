@@ -37,6 +37,7 @@ try {
       "CODEX_CLIENT_ID=",
       "PORT=8788",
       "DB_PATH=./data/quota-pilot.sqlite",
+      ...(process.env.COMPOSE_PROFILES === "tunnel" ? ["COMPOSE_PROFILES=tunnel"] : []),
       `QUOTA_PILOT_UID=${process.getuid?.() ?? 1000}`,
       `QUOTA_PILOT_GID=${process.getgid?.() ?? 1000}`,
     ].join("\n") + "\n";
