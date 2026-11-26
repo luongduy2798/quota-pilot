@@ -120,7 +120,7 @@ function oauthExtensionRequest(type: string, state?: string) {
     const timer = window.setTimeout(() => {
       window.removeEventListener("message", receive);
       resolve(null);
-    }, 800);
+    }, type === "oauth-start" ? 2500 : 800);
     function receive(event: MessageEvent) {
       if (
         event.source !== window ||
@@ -518,6 +518,8 @@ function App() {
       setError("Hãy cài OpenAI OAuth Relay hoặc bật relay cho dashboard này.");
       return;
     }
+    let pendingState: string | undefined;
+    let popupNavigated = false;
     await action(async () => {
       const pending = {
         ...(await api<PendingOAuth>(`/oauth/${provider}/start`, "POST", {
@@ -526,13 +528,21 @@ function App() {
         provider,
         accountId,
       };
+      pendingState = pending.state;
       const started = await oauthExtensionRequest("oauth-start", pending.state);
-      if (!started?.ok) throw new Error("oauth_extension_unavailable");
+      if (!started?.ok)
+        throw new Error("OpenAI OAuth Relay chưa nhận phiên. Reload extension, tải lại dashboard rồi thử lại.");
+      popup.location.href = pending.authUrl;
+      popupNavigated = true;
       setOAuth(pending);
       setCallback("");
       sessionStorage.setItem("qp_oauth", JSON.stringify(pending));
-      popup.location.href = pending.authUrl;
     });
+    if (!popupNavigated) {
+      if (pendingState) void oauthExtensionRequest("oauth-stop", pendingState);
+      popup.close();
+      if (oauthPopup.current === popup) oauthPopup.current = null;
+    }
   }
   useEffect(() => {
     if (!oauth) return;
